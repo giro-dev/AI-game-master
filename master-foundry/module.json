@@ -1,0 +1,19 @@
+{
+  "id": "ai-gm",
+  "title": "AI Game Master Connector",
+  "description": "An AI-powered Game Master assistant that understands player intent and executes abilities automatically.",
+  "version": "0.0.1",
+  "compatibility": {
+    "minimum": "11",
+    "verified": "12"
+  },
+  "authors": [
+    {
+      "name": "AI GM Developer"
+    }
+  ],
+  "esmodules": ["main.js"],
+  "styles": [],
+  "languages": [],
+  "socket": false
+}

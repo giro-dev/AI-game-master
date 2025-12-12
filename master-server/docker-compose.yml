@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: masterdb
+      POSTGRES_USER: masteruser
+      POSTGRES_PASSWORD: masterpassword
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  master-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/masterdb
+      SPRING_DATASOURCE_USERNAME: masteruser
+      SPRING_DATASOURCE_PASSWORD: masterpassword
+      GOOGLE_GENAI_API_KEY: ""
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+volumes:
+  db-data:
+
