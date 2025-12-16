@@ -4,6 +4,7 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/game-master.iml" filepath="$PROJECT_DIR$/game-master.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/master-server.main.iml" filepath="$PROJECT_DIR$/.idea/modules/master-server.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/master-server.test.iml" filepath="$PROJECT_DIR$/.idea/modules/master-server.test.iml" />
     </modules>
   </component>
 </project>

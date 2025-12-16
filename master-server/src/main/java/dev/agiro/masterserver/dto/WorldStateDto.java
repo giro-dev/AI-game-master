@@ -141,5 +141,35 @@ public class WorldStateDto {
             this.currentCombatantId = currentCombatantId;
         }
     }
+
+    private String toString(GameMasterRequest request) {
+        StringBuilder sb = new StringBuilder();
+
+        if (request.getWorldState() != null) {
+            var ws = request.getWorldState();
+            if (ws.getSceneName() != null) {
+                sb.append("Scene: ").append(ws.getSceneName()).append("\n");
+            }
+            if (ws.getTokens() != null && !ws.getTokens().isEmpty()) {
+                sb.append("Tokens in scene:\n");
+                for (var token : ws.getTokens()) {
+                    sb.append(String.format("  - %s (ID: %s)", token.getName(), token.getId()));
+                    if (token.getHp() != null) {
+                        sb.append(String.format(" HP: %d/%d",
+                                token.getHp().get("value"),
+                                token.getHp().get("max")));
+                    }
+                    sb.append("\n");
+                }
+            }
+            if (ws.getCombat() != null) {
+                sb.append(String.format("Combat: Round %d, Turn %d\n",
+                        ws.getCombat().getRound(),
+                        ws.getCombat().getTurn()));
+            }
+        }
+
+        return sb.toString().isEmpty() ? "No world state available" : sb.toString();
+    }
 }
 

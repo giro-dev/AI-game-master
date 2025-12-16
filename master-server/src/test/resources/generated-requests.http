@@ -1,0 +1,188 @@
+###
+POST http://localhost:2323/arxivadors
+Content-Type: application/json
+
+{
+  "name": "name",
+  "description": "test folder",
+  "path": "/home/albert/Imatges/loli"
+}
+
+<> 2025-06-15T024222.201.json
+
+###
+@arxivadorId = 153c7986-93ec-4538-a313-a46a34672900
+POST http://localhost:2323/api/arxivadors/{{arxivadorId}}/photos/load
+Content-Type: application/x-www-form-urlencoded
+
+###
+POST http://localhost:8080/api/claims/associate-batch
+Content-Type: application/json
+
+{
+  "claimIds": [],
+  "entityId": 0,
+  "entityType": ""
+}
+
+###
+GET http://localhost:8080/api/claims/search?
+    country=CHN
+
+<> 2025-07-06T152326.200.json
+<> 2025-07-06T152253.200.json
+<> 2025-07-06T152236.200.json
+<> 2025-07-06T152201.200.json
+<> 2025-07-06T151359.200.json
+<> 2025-07-06T131056.200.json
+<> 2025-07-06T130920.200.json
+<> 2025-07-06T125501.200.json
+<> 2025-07-06T024134.400.json
+
+###
+@Id = cc9a6fa3-f60e-4d33-a908-7d4718933ca5:16
+GET http://localhost:8080/api/claims/1d0c9547-d898-4332-864b-06762cffedf3
+Content-Type: application/json
+
+<> 2025-07-06T131550.200.json
+<> 2025-07-06T131436.200.json
+<> 2025-07-06T125321.200.json
+<> 2025-07-06T125305.200.json
+<> 2025-07-06T032303.400.json
+<> 2025-07-06T031922.400.json
+<> 2025-07-06T031830.400.json
+<> 2025-07-06T031721.400.json
+<> 2025-07-06T030942.400.json
+<> 2025-07-06T030934.400.json
+<> 2025-07-06T030924.400.json
+<> 2025-07-06T030912.400.json
+
+###
+POST http://localhost:8080/api/claims/{{claimId}}/regulator
+Content-Type: application/json
+
+{
+  "name": "John",
+  "status": "Whick"
+}
+
+<> 2025-07-06T131426.201.json
+
+###
+@claimId = 1d0c9547-d898-4332-864b-06762cffedf3
+POST http://localhost:8080/api/claims/{{claimId}}/invoice
+Content-Type: application/json
+
+{
+  "name": "factura_1",
+  "status": "ACTIVE"
+}
+
+<> 2025-07-06T131347.201.json
+
+###
+@regulatorId = 2e88d067-7211-4e58-b49e-4e439df21232
+PUT http://localhost:8080/api/claims/regulators/{{regulatorId}}/claims?
+    country=CHN
+Content-Type: application/json
+
+###
+POST http://localhost:8089/api/photos?
+    q={{$random.alphanumeric(8)}}&
+    page={{$random.integer(100)}}&
+    size={{$random.integer(100)}}
+    Content-Type: multipart/form-data
+
+###
+POST http://localhost:8080/api/chat
+
+###
+POST http://localhost:8080/api/v1/gemini
+Content-Type: application/json
+
+{
+  "prompt": "How to resolve a role game action with AI promts?"
+}
+
+<> 2025-12-11T111238.200.json
+<> 2025-12-11T111056.200.json
+<> 2025-12-11T110215.200.json
+<> 2025-12-11T105008.502.json
+<> 2025-12-11T104343.502.json
+<> 2025-12-11T104153.502.json
+<> 2025-12-10T203513.502.json
+<> 2025-12-10T203454.405.json
+
+###
+POST http://localhost:8080/api/v1/image
+Content-Type: application/json
+
+{
+  "prompt": "A fantasy landscape with mountains and a river, digital artstyle",
+  "n": 1,
+  "size": "1024x1024"
+}
+
+<> 2025-12-12T232649.404.json
+<> 2025-12-12T184817.502.json
+<> 2025-12-12T184714.502.json
+<> 2025-12-12T184608.502.json
+<> 2025-12-12T184551.400.json
+
+###
+POST http://localhost:8080/gm/respond
+Content-Type: application/json
+
+{
+  "prompt": "Vull passar per darrera dels guardes sense que em vegin",
+  "tokenId": "1234",
+  "tokenName": "Joe",
+  "abilities": [{
+                         "id": "ste", "name": "Stealth", "level": 5}, {
+    "id": "agi", "name": "Agility", "level": 4}, {
+    "id": "per", "name": "Perception", "level": 3}, {
+    "id": "dis", "name": "Disguise", "level": 2}, {
+    "id": "loc", "name": "Lockpicking", "level": 1}, {
+    "id": "ath", "name": "Athletics", "level": 2}, {
+    "id": "dec", "name": "Deception", "level": 3}, {
+    "id": "ins", "name": "Insight", "level": 4}, {
+    "id": "sur", "name": "Survival", "level": 5}, {
+    "id": "inv", "name": "Investigation", "level": 2}
+  ],
+  "worldState": {
+    "sceneId": "2",
+    "sceneName": "Market Square",
+
+  "description": "The bustling market square is filled with vendors shouting their wares, colorful stalls displaying exotic goods, and townsfolk haggling over prices. The aroma of fresh bread and spices fills the air, while the sound of lively chatter and occasional laughter creates a vibrant atmosphere. In the center of the square, a fountain adorned with intricate carvings serves as a gathering point for locals and travelers alike. Four guards patrol the area, their eyes sharp for any signs of trouble."
+  }
+}
+
+<> 2025-12-13T102817.200.json
+<> 2025-12-13T102753.200.json
+<> 2025-12-13T102646.200.json
+<> 2025-12-13T102555.200.json
+<> 2025-12-13T102538.200.json
+<> 2025-12-13T102519.200.json
+<> 2025-12-12T233942.200.json
+<> 2025-12-12T233914.400.json
+<> 2025-12-12T233852.400.json
+<> 2025-12-12T233547.200.json
+<> 2025-12-12T233236.200.json
+<> 2025-12-12T232655.500.json
+<> 2025-12-12T232553.500.json
+
+###
+POST http://localhost:8080/api/pdf/upload?foundrySystem=hitos
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="element-name"
+Content-Type: text/plain
+
+Name
+--WebAppBoundary
+Content-Disposition: form-data; name="data"; filename="data.json"
+Content-Type: application/json
+
+< ./request-form-data.json
+--WebAppBoundary--

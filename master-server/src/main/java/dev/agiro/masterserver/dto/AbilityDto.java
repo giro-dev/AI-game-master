@@ -2,6 +2,7 @@ package dev.agiro.masterserver.dto;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class AbilityDto {
     private String id;
@@ -113,6 +114,39 @@ public class AbilityDto {
 
     public void setProficient(Boolean proficient) {
         this.proficient = proficient;
+    }
+
+
+    private String toString(List<AbilityDto> abilities) {
+        if (abilities == null || abilities.isEmpty()) {
+            return "No abilities available";
+        }
+
+        return abilities.stream()
+                .map(a -> {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(String.format("- [%s] %s (type: %s)", a.getId(), a.getName(), a.getType()));
+                    if (a.getDescription() != null && !a.getDescription().isEmpty()) {
+                        String desc = a.getDescription().length() > 100
+                                ? a.getDescription().substring(0, 100) + "..."
+                                : a.getDescription();
+                        sb.append("\n  Description: ").append(desc);
+                    }
+                    if (a.getActionType() != null) {
+                        sb.append("\n  Action Type: ").append(a.getActionType());
+                    }
+                    if (a.getDamage() != null && !a.getDamage().isEmpty()) {
+                        sb.append("\n  Damage: ").append(a.getDamage());
+                    }
+                    if (a.getLevel() != null) {
+                        sb.append("\n  Level: ").append(a.getLevel());
+                    }
+                    if (a.getMod() != null) {
+                        sb.append("\n  Modifier: ").append(a.getMod() >= 0 ? "+" : "").append(a.getMod());
+                    }
+                    return sb.toString();
+                })
+                .collect(Collectors.joining("\n"));
     }
 }
 

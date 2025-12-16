@@ -13,13 +13,13 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
 public class GameMasterService {
 
     private final ChatClient chatClient;
-    private final ObjectMapper objectMapper;
 
     private static final String SYSTEM_PROMPT = """
             You are an AI Game Master assistant for a tabletop RPG game (like D&D 5e) running on Foundry VTT.
@@ -60,7 +60,7 @@ public class GameMasterService {
                - amount: damage amount
             
             IMPORTANT: 
-            - language used in the response must be %s
+            - language used in the response must be in {language}
             - Use the language and terminology of a tabletop RPG Game Master
             - Be concise but descriptive in the narration
             - Only use abilities that exist in the provided list
@@ -72,42 +72,42 @@ public class GameMasterService {
             - Respond ONLY with valid JSON, no markdown or extra text
             """;
 
+    private final String USER_MESSAGE_TEMPLATE = """
+                TOKEN: {tokenName} (ID: {tokenId})
+                
+                USER PROMPT: {prompt}
+                
+                AVAILABLE ABILITIES:
+                {abilities}
+                
+                WORLD STATE:
+                {worldState}
+                
+                Analyze the user's intent and respond with the appropriate JSON.
+                """;
+
     public GameMasterService(ChatClient.Builder chatClientBuilder) {
         this.chatClient = chatClientBuilder.defaultOptions(ChatOptions.builder()
                 .model("gemini-2.5-flash")
                 .temperature(0.7)
                 .build())
                 .build();
-        this.objectMapper = new ObjectMapper();
     }
 
     public GameMasterResponse processRequest(GameMasterRequest request) {
-        String abilitiesSummary = formatAbilities(request.getAbilities());
-        String worldStateSummary = formatWorldState(request);
 
-        String userMessage = String.format("""
-                TOKEN: %s (ID: %s)
-                
-                USER PROMPT: %s
-                
-                AVAILABLE ABILITIES:
-                %s
-                
-                WORLD STATE:
-                %s
-                
-                Analyze the user's intent and respond with the appropriate JSON.
-                """,
-                request.getTokenName(),
-                request.getTokenId(),
-                request.getPrompt(),
-                abilitiesSummary,
-                worldStateSummary
-        );
+        Map<String, Object> userPromptParameters = Map.of(
+               "tokenName", request.getTokenName(),
+               "tokenId", request.getTokenId(),
+                "prompt", request.getPrompt(),
+                "abilities", request.getAbilities().stream().map(AbilityDto::toString).toList(),
+                "worldState", request.getWorldState().toString());
 
         GameMasterResponse aiResponse = chatClient.prompt()
-                .system(SYSTEM_PROMPT.formatted("Català")) // Change language as needed
-                .user(userMessage)
+                .system(system -> system.text(SYSTEM_PROMPT)
+                        .param("language", "Català"))
+                .user(user -> user.text(USER_MESSAGE_TEMPLATE)
+                        .params(userPromptParameters))
                 .call()
                 .entity(GameMasterResponse.class);
 
@@ -121,66 +121,7 @@ public class GameMasterService {
         return aiResponse;
     }
 
-    private String formatAbilities(List<AbilityDto> abilities) {
-        if (abilities == null || abilities.isEmpty()) {
-            return "No abilities available";
-        }
 
-        return abilities.stream()
-                .map(a -> {
-                    StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- [%s] %s (type: %s)", a.getId(), a.getName(), a.getType()));
-                    if (a.getDescription() != null && !a.getDescription().isEmpty()) {
-                        String desc = a.getDescription().length() > 100
-                            ? a.getDescription().substring(0, 100) + "..."
-                            : a.getDescription();
-                        sb.append("\n  Description: ").append(desc);
-                    }
-                    if (a.getActionType() != null) {
-                        sb.append("\n  Action Type: ").append(a.getActionType());
-                    }
-                    if (a.getDamage() != null && !a.getDamage().isEmpty()) {
-                        sb.append("\n  Damage: ").append(a.getDamage());
-                    }
-                    if (a.getLevel() != null) {
-                        sb.append("\n  Level: ").append(a.getLevel());
-                    }
-                    if (a.getMod() != null) {
-                        sb.append("\n  Modifier: ").append(a.getMod() >= 0 ? "+" : "").append(a.getMod());
-                    }
-                    return sb.toString();
-                })
-                .collect(Collectors.joining("\n"));
-    }
 
-    private String formatWorldState(GameMasterRequest request) {
-        StringBuilder sb = new StringBuilder();
-
-        if (request.getWorldState() != null) {
-            var ws = request.getWorldState();
-            if (ws.getSceneName() != null) {
-                sb.append("Scene: ").append(ws.getSceneName()).append("\n");
-            }
-            if (ws.getTokens() != null && !ws.getTokens().isEmpty()) {
-                sb.append("Tokens in scene:\n");
-                for (var token : ws.getTokens()) {
-                    sb.append(String.format("  - %s (ID: %s)", token.getName(), token.getId()));
-                    if (token.getHp() != null) {
-                        sb.append(String.format(" HP: %d/%d",
-                            token.getHp().get("value"),
-                            token.getHp().get("max")));
-                    }
-                    sb.append("\n");
-                }
-            }
-            if (ws.getCombat() != null) {
-                sb.append(String.format("Combat: Round %d, Turn %d\n",
-                    ws.getCombat().getRound(),
-                    ws.getCombat().getTurn()));
-            }
-        }
-
-        return sb.toString().isEmpty() ? "No world state available" : sb.toString();
-    }
 }
 

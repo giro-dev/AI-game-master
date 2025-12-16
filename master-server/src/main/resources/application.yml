@@ -11,9 +11,13 @@ spring:
           options:
             model: gemini-2.5-flash
             temperature: 0.7
+        embedding:
+          api-key: ${GOOGLE_GENAI_API_KEY}
+          options:
+            model: gemini-embedding-001
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/masterdb
+    url: jdbc:postgresql://localhost:35555/masterdb
     username: masteruser
     password: masterpassword
     driver-class-name: org.postgresql.Driver
@@ -26,9 +30,14 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
 
 # Gemini HTTP API configuration used by the custom client
-gemini:
-  api:
-    url: ${GEMINI_API_URL:https://api.gemini.example/v1}
-    key: ${GOOGLE_GENAI_API_KEY:}
+
+logging:
+  level:
+    root: warn
+    com.example.masterserver: debug
