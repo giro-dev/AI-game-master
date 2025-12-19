@@ -1,9 +1,34 @@
-import { handleAiResponse } from "./api.js";
+import { handleAiResponse, CharacterAPI } from "./api.js";
+import { SchemaExtractor } from "./schema/schema-extractor.js";
+import { BlueprintGenerator } from "./blueprints/blueprint-generator.js";
+import { AdapterRegistry } from "./adapters/base-adapter.js";
+import { Dnd5eAdapter } from "./adapters/dnd5e-adapter.js";
+import { HitosAdapter } from "./adapters/hitos-adapter.js";
+import { CharacterGeneratorUI } from "./ui/character-generator.js";
 
 Hooks.on("ready", () => {
     console.log("AI GM module loaded");
 
+    // Initialize adapter registry
+    const adapterRegistry = new AdapterRegistry();
+
+    // Register system adapters
+    adapterRegistry.register(new Dnd5eAdapter());
+    adapterRegistry.register(new HitosAdapter());
+
+    // Get active adapter
+    const activeAdapter = adapterRegistry.getActive();
+
+    // Initialize blueprint generator with adapter
+    const blueprintGenerator = new BlueprintGenerator(activeAdapter);
+
     game.aiGM = {
+        // Character generation components
+        schemaExtractor: new SchemaExtractor(),
+        blueprintGenerator: blueprintGenerator,
+        adapterRegistry: adapterRegistry,
+        CharacterAPI: CharacterAPI,
+
         /**
          * Send a prompt to the AI Game Master along with token abilities
          * @param {string} message - The user's prompt/command
@@ -47,8 +72,54 @@ Hooks.on("ready", () => {
                 console.error("AI GM Error:", error);
                 ui.notifications.error(`AI GM Error: ${error.message}`);
             }
+        },
+
+        /**
+         * Open the character generator UI
+         */
+        openCharacterGenerator() {
+            new CharacterGeneratorUI().render(true);
+        },
+
+        /**
+         * Generate a character from a prompt (programmatic API)
+         * @param {string} prompt - Character description
+         * @param {string} actorType - Actor type to generate
+         * @param {string} language - Language for generation
+         */
+        async generateCharacter(prompt, actorType = 'character', language = 'en') {
+            const blueprint = blueprintGenerator.generateAIBlueprint(actorType);
+
+            try {
+                const response = await fetch('http://localhost:8080/gm/character/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: prompt,
+                        actorType: actorType,
+                        blueprint: blueprint,
+                        language: language
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server responded with ${response.status}`);
+                }
+
+                const data = await response.json();
+                return CharacterAPI.createCharacter(data.character);
+
+            } catch (error) {
+                console.error('Character generation error:', error);
+                throw error;
+            }
         }
     };
+
+    // Log system information
+    console.log(`[AI-GM] System: ${game.system.id} (${game.system.title})`);
+    console.log(`[AI-GM] Active Adapter: ${activeAdapter ? activeAdapter.getName() : 'None'}`);
+    console.log(`[AI-GM] Available Actor Types:`, blueprintGenerator.schemaExtractor.getActorTypes());
 });
 
 /**
@@ -161,4 +232,59 @@ Hooks.on("chatMessage", (chatlog, message, chatdata) => {
         game.aiGM.askAI(query);
         return false; // Prevent message from appearing in chat
     }
+
+    if (message.startsWith("/aichar ")) {
+        const prompt = message.substring(8);
+        game.aiGM.generateCharacter(prompt).then(actor => {
+            ui.notifications.info(`Created character: ${actor.name}`);
+            actor.sheet.render(true);
+        }).catch(error => {
+            ui.notifications.error(`Failed to generate character: ${error.message}`);
+        });
+        return false;
+    }
+});
+
+// Add button to actor directory
+Hooks.on("renderActorDirectory", (app, html, data) => {
+    if (!game.user.isGM) return;
+
+    const button = $(`
+        <button class="ai-gm-generate-character" style="width: 100%; margin: 5px 0;">
+            <i class="fas fa-magic"></i> AI Character Generator
+        </button>
+    `);
+
+    button.click(() => {
+        game.aiGM.openCharacterGenerator();
+    });
+
+    html.find('.directory-header').after(button);
+});
+
+// Add context menu option for character explanation
+Hooks.on("getActorDirectoryEntryContext", (html, options) => {
+    options.push({
+        name: "Explain with AI",
+        icon: '<i class="fas fa-book-open"></i>',
+        condition: (li) => {
+            const actor = game.actors.get(li.data("documentId"));
+            return actor && game.user.isGM;
+        },
+        callback: async (li) => {
+            const actor = game.actors.get(li.data("documentId"));
+            if (!actor) return;
+
+            try {
+                const explanation = await game.aiGM.CharacterAPI.explainCharacter(actor);
+
+                ChatMessage.create({
+                    content: `<h3>${actor.name}</h3><p>${explanation}</p>`,
+                    speaker: { alias: "AI Game Master" }
+                });
+            } catch (error) {
+                ui.notifications.error(`Failed to explain character: ${error.message}`);
+            }
+        }
+    });
 });

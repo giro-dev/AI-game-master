@@ -1,18 +1,13 @@
 -- liquibase formatted sql
 
--- changeset albert:1765832139165-1
-CREATE TABLE document_chunks
-(
-    id              UUID                        NOT NULL,
-    content         TEXT                        NOT NULL,
-    embedding       VECTOR(768),
-    title           VARCHAR(500),
-    page            INTEGER,
-    chunk_type      VARCHAR(50),
-    source_document VARCHAR(255),
-    foundry_system  VARCHAR(100),
-    metadata        JSONB,
-    created_at      TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-    CONSTRAINT pk_document_chunks PRIMARY KEY (id)
+-- changeset albert:add-vectorStore
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS hstore;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE TABLE IF NOT EXISTS vector_store (
+                                            id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+                                            content text,
+                                            metadata json,
+                                            embedding vector(1536) -- 1536 is the default embedding dimension
 );
-
+CREATE INDEX ON vector_store USING HNSW (embedding vector_cosine_ops);

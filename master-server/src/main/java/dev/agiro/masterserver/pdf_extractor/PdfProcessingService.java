@@ -1,202 +1,119 @@
 package dev.agiro.masterserver.pdf_extractor;
 
-import dev.agiro.masterserver.embedding.DocumentChunkEntity;
-import dev.agiro.masterserver.embedding.DocumentChunkRepository;
-import dev.agiro.masterserver.embedding.EmbeddingDto;
-import dev.agiro.masterserver.embedding.EmbeddingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.pdfbox.cos.COSName;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDResources;
-import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
-import org.apache.pdfbox.text.PDFTextStripper;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.transformer.splitter.TokenTextSplitter;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.ai.retry.NonTransientAiException;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.time.Duration;
+import java.util.Collection;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class PdfProcessingService {
 
-    private final EmbeddingService embeddingService;
-    private final DocumentChunkRepository documentChunkRepository;
+    private final VectorStore vectorStore;
+    private final PDFDocumentReader pdfDocumentReader;
 
-    @Transactional
-    public List<EmbeddingDto> processPdf(MultipartFile file) throws IOException {
-        return processPdf(file, null);
+    private static final int REQUESTS_LIMIT_PER_MINUTE = 90;     // RPM (keep some headroom)
+    private static final int TOKENS_LIMIT_PER_MINUTE = 38_000; // TPM (keep some headroom)
+    private static final Duration WINDOW_DURATION = Duration.ofMinutes(1);
+    private static final int MAX_RETRIES_ON_429 = 5;
+
+    // Rough token estimate (~4 chars per token for English)
+    private static int estimateTokens(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        return (int) Math.ceil(text.length() / 4.0);
     }
 
     @Transactional
-    public List<EmbeddingDto> processPdf(MultipartFile file, String foundrySystem) throws IOException {
-        List<EmbeddingDto> results = new ArrayList<>();
-        String sourceDocument = file.getOriginalFilename();
+    public int processPdfByTableOfContents(MultipartFile file, String foundrySystem) throws java.io.IOException {
+        List<Document> docsFromPdfWithCatalog = pdfDocumentReader.getDocsFromPdfWithCatalog(file, foundrySystem);
 
-        try (PDDocument doc = PDDocument.load(file.getInputStream())) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            String fullText = stripper.getText(doc);
+        TokenTextSplitter textSplitter = TokenTextSplitter.builder()
+                .withChunkSize(2000)
+                .withMinChunkSizeChars(300)
+                .build();
 
-            // Split into sections
-            List<Section> sections = splitIntoSections(fullText);
+        var metadataEnricher = new GameMasterMetadataEnricher(file.getOriginalFilename(), foundrySystem);
 
-            for (Section s : sections) {
-                String textToEmbed = s.getTitle() + "\n" + s.getBody();
-                float[] vec = embeddingService.createEmbedding(textToEmbed);
+        List<Document> documents = docsFromPdfWithCatalog.stream()
+                .map(textSplitter::split)
+                .map(metadataEnricher)
+                .flatMap(Collection::stream)
+                .toList();
 
-                Map<String, Object> meta = new HashMap<>();
-                meta.put("title", s.getTitle());
-                meta.put("page", s.getPage());
-                meta.put("type", "text");
-
-                // Persist to database
-                DocumentChunkEntity entity = DocumentChunkEntity.builder()
-                        .content(textToEmbed)
-                        .embedding(vec)
-                        .title(s.getTitle())
-                        .page(s.getPage())
-                        .chunkType("text")
-                        .sourceDocument(sourceDocument)
-                        .foundrySystem(foundrySystem)
-                        .metadata(meta)
-                        .build();
-                documentChunkRepository.save(entity);
-
-                results.add(new EmbeddingDto(vec, meta));
-            }
-
-            // Extract and process images
-            List<ImageData> images = extractImages(doc);
-            for (ImageData img : images) {
-                String textToEmbed = "Image from page " + img.getPage() + ": " + img.getFilename();
-                float[] vec = embeddingService.createEmbedding(textToEmbed);
-
-                Map<String, Object> meta = new HashMap<>();
-                meta.put("type", "image");
-                meta.put("page", img.getPage());
-                meta.put("filename", img.getFilename());
-                meta.put("path", img.getPath());
-
-                DocumentChunkEntity entity = DocumentChunkEntity.builder()
-                        .content(textToEmbed)
-                        .embedding(vec)
-                        .title("Image: " + img.getFilename())
-                        .page(img.getPage())
-                        .chunkType("image")
-                        .sourceDocument(sourceDocument)
-                        .foundrySystem(foundrySystem)
-                        .metadata(meta)
-                        .build();
-                documentChunkRepository.save(entity);
-
-                results.add(new EmbeddingDto(vec, meta));
-            }
-
-            // Detect and process tables
-            List<Section> tables = detectTables(sections);
-            for (Section t : tables) {
-                String textToEmbed = t.getTitle() + "\n" + t.getBody();
-                float[] vec = embeddingService.createEmbedding(textToEmbed);
-
-                Map<String, Object> meta = new HashMap<>();
-                meta.put("type", "table");
-                meta.put("title", t.getTitle());
-                meta.put("page", t.getPage());
-
-                DocumentChunkEntity entity = DocumentChunkEntity.builder()
-                        .content(textToEmbed)
-                        .embedding(vec)
-                        .title(t.getTitle())
-                        .page(t.getPage())
-                        .chunkType("table")
-                        .sourceDocument(sourceDocument)
-                        .foundrySystem(foundrySystem)
-                        .metadata(meta)
-                        .build();
-                documentChunkRepository.save(entity);
-
-                results.add(new EmbeddingDto(vec, meta));
-            }
-        }
-
-        log.info("Processed PDF '{}': {} chunks created", sourceDocument, results.size());
-        return results;
+        addWithRateLimit(documents);
+        return documents.size();
     }
 
-    private List<Section> splitIntoSections(String text) {
-        List<Section> out = new ArrayList<>();
-        String[] lines = text.split("\\r?\\n");
-        Pattern headingPattern = Pattern.compile("^(\\d+(\\.\\d+)*)\\s+(.+)$");
-        StringBuilder currentBody = new StringBuilder();
-        String currentTitle = "Introduction";
-        int currentPage = 1;
+    // Throttle by RPM and TPM; retry on 429 with exponential backoff.
+    private void addWithRateLimit(List<Document> documents) {
+        long windowStartMs = System.currentTimeMillis();
+        int requestsInWindow = 0;
+        int tokensInWindow = 0;
 
-        for (String line : lines) {
-            Matcher m = headingPattern.matcher(line.trim());
-            if (m.matches() || (line.trim().equals(line.trim().toUpperCase()) && line.trim().length() > 3)) {
-                if (currentBody.length() > 0) {
-                    out.add(new Section(currentTitle, currentBody.toString().trim(), currentPage));
-                }
-                currentTitle = m.matches() ? m.group(3) : line.trim();
-                currentBody = new StringBuilder();
-            } else {
-                if (!line.trim().isEmpty()) {
-                    currentBody.append(line).append("\n");
-                }
-            }
-        }
-        if (currentBody.length() > 0) {
-            out.add(new Section(currentTitle, currentBody.toString().trim(), currentPage));
-        }
-        return out;
-    }
+        for (Document doc : documents) {
+            int tokens = estimateTokens(doc.getText());
 
-    private List<ImageData> extractImages(PDDocument doc) throws IOException {
-        List<ImageData> images = new ArrayList<>();
-        int pageIndex = 0;
-        for (PDPage page : doc.getPages()) {
-            pageIndex++;
-            PDResources resources = page.getResources();
-            if (resources == null) continue;
-            Iterable<COSName> xObjectNames = resources.getXObjectNames();
-            for (COSName name : xObjectNames) {
-                try {
-                    var xobj = resources.getXObject(name);
-                    if (xobj instanceof PDImageXObject img) {
-                        String filename = "pdf_image_p" + pageIndex + "_" + name.getName() + ".png";
-                        File outFile = File.createTempFile("pdf_img_", ".png");
-                        try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                            fos.write(img.createInputStream().readAllBytes());
-                        }
-                        images.add(new ImageData(outFile.getAbsolutePath(), pageIndex, filename));
+            // If adding this doc would exceed the current window limits, sleep until the window resets.
+            long now = System.currentTimeMillis();
+            long elapsed = now - windowStartMs;
+            if (requestsInWindow >= REQUESTS_LIMIT_PER_MINUTE ||
+                    tokensInWindow + tokens > TOKENS_LIMIT_PER_MINUTE) {
+
+                long sleepMs = WINDOW_DURATION.toMillis() - elapsed;
+                if (sleepMs > 0) {
+                    log.debug("Throttling: sleeping {} ms to respect rate limits (requests={}, tokens={})",
+                            sleepMs, requestsInWindow, tokensInWindow);
+                    try {
+                        Thread.sleep(sleepMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
                     }
-                } catch (Exception e) {
-                    log.warn("Failed to extract image {} from page {}: {}", name, pageIndex, e.getMessage());
+                }
+                windowStartMs = System.currentTimeMillis();
+                requestsInWindow = 0;
+                tokensInWindow = 0;
+            }
+
+            // Try sending this document; retry on 429 with backoff.
+            sendWithRetry(doc);
+
+            requestsInWindow += 1;      // 1 request per document
+            tokensInWindow += tokens;    // approximate token usage for TPM
+        }
+    }
+
+    private void sendWithRetry(Document doc) {
+        int attempt = 0;
+        while (true) {
+            try {
+                vectorStore.add(List.of(doc)); // 1 request per doc for predictable throttling
+                return;
+            } catch (NonTransientAiException ex) {
+                // HTTP 429 or quota messages -> backoff and retry
+                String msg = ex.getMessage() == null ? "" : ex.getMessage().toLowerCase();
+                boolean is429OrQuota = msg.contains("429") || msg.contains("rate limit") || msg.contains("insufficient_quota");
+                if (!is429OrQuota || attempt >= MAX_RETRIES_ON_429) {
+                    throw ex;
+                }
+                attempt++;
+                long backoffMs = (long) Math.min(60_000, Math.pow(2, attempt) * 1_000L); // capped exponential backoff
+                log.warn("Embedding request throttled (attempt {}), backing off {} ms: {}", attempt, backoffMs, ex.getMessage());
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
                 }
             }
         }
-        return images;
-    }
-
-    private List<Section> detectTables(List<Section> sections) {
-        List<Section> tables = new ArrayList<>();
-        for (Section s : sections) {
-            long linesWithCols = Arrays.stream(s.getBody().split("\\r?\\n"))
-                    .filter(l -> l.trim().contains("  ") || l.trim().contains("\t"))
-                    .count();
-            if (linesWithCols > 3) {
-                tables.add(new Section("Table: " + s.getTitle(), s.getBody(), s.getPage()));
-            }
-        }
-        return tables;
     }
 }
-

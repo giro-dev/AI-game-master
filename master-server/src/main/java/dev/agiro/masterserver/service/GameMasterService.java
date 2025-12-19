@@ -8,7 +8,9 @@ import dev.agiro.masterserver.dto.GameMasterRequest;
 import dev.agiro.masterserver.dto.GameMasterResponse;
 import dev.agiro.masterserver.dto.GameMasterResponse.ActionDto;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -20,6 +22,7 @@ import java.util.stream.Collectors;
 public class GameMasterService {
 
     private final ChatClient chatClient;
+    private final VectorStore vectorStore;
 
     private static final String SYSTEM_PROMPT = """
             You are an AI Game Master assistant for a tabletop RPG game (like D&D 5e) running on Foundry VTT.
@@ -86,12 +89,13 @@ public class GameMasterService {
                 Analyze the user's intent and respond with the appropriate JSON.
                 """;
 
-    public GameMasterService(ChatClient.Builder chatClientBuilder) {
-        this.chatClient = chatClientBuilder.defaultOptions(ChatOptions.builder()
-                .model("gemini-2.5-flash")
-                .temperature(0.7)
-                .build())
-                .build();
+    public GameMasterService(ChatClient.Builder chatClientBuilder, VectorStore vectorStore) {
+            this.chatClient = chatClientBuilder.defaultOptions(ChatOptions.builder()
+                    .model("gpt-4.1-mini")
+                    .temperature(0.7)
+                    .build())
+                    .build();
+        this.vectorStore = vectorStore;
     }
 
     public GameMasterResponse processRequest(GameMasterRequest request) {
@@ -106,6 +110,7 @@ public class GameMasterService {
         GameMasterResponse aiResponse = chatClient.prompt()
                 .system(system -> system.text(SYSTEM_PROMPT)
                         .param("language", "Català"))
+                .advisors(QuestionAnswerAdvisor.builder(vectorStore).build())
                 .user(user -> user.text(USER_MESSAGE_TEMPLATE)
                         .params(userPromptParameters))
                 .call()
@@ -120,6 +125,7 @@ public class GameMasterService {
 
         return aiResponse;
     }
+
 
 
 

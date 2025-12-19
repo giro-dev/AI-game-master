@@ -27,9 +27,6 @@ public class DocumentChunkEntity {
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
 
-    @Column(columnDefinition = "vector(768)")
-    private float[] embedding;
-
     @Column(length = 500)
     private String title;
 

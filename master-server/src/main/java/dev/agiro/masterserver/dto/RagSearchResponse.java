@@ -4,22 +4,25 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.springframework.ai.document.Document;
 
 import java.util.Map;
-import java.util.UUID;
 
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class RagSearchResponse {
-    private UUID id;
+    private String id;
     private String content;
-    private String title;
-    private Integer page;
-    private String chunkType;
-    private String sourceDocument;
-    private String foundrySystem;
     private Map<String, Object> metadata;
+
+    public static RagSearchResponse fromDocument(Document document) {
+        return new RagSearchResponse(
+                document.getId(),
+                document.getFormattedContent(),
+                document.getMetadata()
+        );
+    }
 }
 

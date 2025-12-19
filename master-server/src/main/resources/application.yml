@@ -4,6 +4,12 @@ spring:
 
   # Google Gemini AI Configuration
   ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      embedding:
+        options:
+          model: text-embedding-3-small
+        project-id: ${GM-PROJECT}
     google:
       genai:
         api-key: ${GOOGLE_GENAI_API_KEY}
@@ -15,7 +21,12 @@ spring:
           api-key: ${GOOGLE_GENAI_API_KEY}
           options:
             model: gemini-embedding-001
-
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 768
+        max-document-batch-size: 10000 # Optional: Maximum number of documents per batch
   datasource:
     url: jdbc:postgresql://localhost:35555/masterdb
     username: masteruser
@@ -35,9 +46,14 @@ spring:
       max-file-size: 50MB
       max-request-size: 50MB
 
+game-master:
+  chat:
+    default-language: catalan
+    default-model: gpt-4.1-mini
+
 # Gemini HTTP API configuration used by the custom client
 
 logging:
   level:
     root: warn
-    com.example.masterserver: debug
+    dev.agiro.masterserver: debug

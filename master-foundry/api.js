@@ -1,3 +1,6 @@
+/**
+ * Handle AI response for action execution
+ */
 export async function handleAiResponse(ai) {
     if (ai.narration) {
         ChatMessage.create({ content: ai.narration, speaker: { alias: "AI Game Master" } });
@@ -69,3 +72,120 @@ export async function handleAiResponse(ai) {
         }
     }
 }
+
+/**
+ * Character Generation API
+ */
+export const CharacterAPI = {
+    /**
+     * Get blueprint for a specific actor type
+     * @param {string} actorType - The actor type
+     * @returns {Object} Blueprint
+     */
+    getBlueprint(actorType) {
+        if (!game.aiGM?.blueprintGenerator) {
+            throw new Error('Blueprint generator not initialized');
+        }
+        return game.aiGM.blueprintGenerator.generateAIBlueprint(actorType);
+    },
+
+    /**
+     * Get all available actor types
+     * @returns {Array<string>}
+     */
+    getActorTypes() {
+        if (!game.aiGM?.blueprintGenerator) {
+            throw new Error('Blueprint generator not initialized');
+        }
+        return game.aiGM.blueprintGenerator.schemaExtractor.getActorTypes();
+    },
+
+    /**
+     * Validate character data against blueprint
+     * @param {Object} characterData
+     * @param {string} actorType
+     * @returns {Object} Validation result
+     */
+    validateCharacter(characterData, actorType) {
+        if (!game.aiGM?.blueprintGenerator) {
+            throw new Error('Blueprint generator not initialized');
+        }
+
+        const blueprint = game.aiGM.blueprintGenerator.generateBlueprint(actorType);
+        return game.aiGM.blueprintGenerator.validateCharacter(characterData, blueprint);
+    },
+
+    /**
+     * Create character from AI-generated data
+     * @param {Object} characterData
+     * @returns {Actor} Created actor
+     */
+    async createCharacter(characterData) {
+        // Validate
+        const validation = this.validateCharacter(characterData, characterData.actor.type);
+
+        if (!validation.valid) {
+            console.warn('[AI-GM] Character validation warnings:', validation.errors);
+        }
+
+        // Apply system adapter preprocessing
+        const adapter = game.aiGM?.adapterRegistry?.getActive();
+        if (adapter) {
+            characterData = adapter.preprocessAIData(characterData);
+        }
+
+        // Create actor
+        const actor = await Actor.create(characterData.actor);
+
+        if (!actor) {
+            throw new Error('Failed to create actor');
+        }
+
+        // Create items
+        if (characterData.items && characterData.items.length > 0) {
+            await actor.createEmbeddedDocuments('Item', characterData.items);
+        }
+
+        // Post-process
+        if (adapter) {
+            await adapter.postProcess(actor);
+        }
+
+        return actor;
+    },
+
+    /**
+     * Explain an existing character (reverse operation)
+     * @param {Actor} actor
+     * @returns {string} AI-generated description
+     */
+    async explainCharacter(actor) {
+        const characterData = {
+            actor: actor.toObject(),
+            items: actor.items.map(i => i.toObject())
+        };
+
+        try {
+            const response = await fetch('http://localhost:8080/gm/character/explain', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    characterData: characterData,
+                    systemId: game.system.id
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server responded with ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data.explanation;
+
+        } catch (error) {
+            console.error('Character explanation error:', error);
+            throw error;
+        }
+    }
+};
+

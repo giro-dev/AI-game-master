@@ -1,8 +1,10 @@
 package dev.agiro.masterserver.controller;
 
+import dev.agiro.masterserver.embedding.DocumentChunkEntity;
 import dev.agiro.masterserver.embedding.EmbeddingDto;
 import dev.agiro.masterserver.pdf_extractor.PdfProcessingService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.ai.document.Document;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -31,13 +33,13 @@ public class PdfUploadController {
             ));
         }
 
-        List<EmbeddingDto> embeddings = pdfProcessingService.processPdf(file, foundrySystem);
+        int embeddings = pdfProcessingService.processPdfByTableOfContents(file, foundrySystem);
 
         return ResponseEntity.ok(Map.of(
                 "message", "PDF processed successfully",
                 "filename", Objects.requireNonNull(file.getOriginalFilename()),
                 "foundrySystem", foundrySystem != null ? foundrySystem : "none",
-                "chunksCreated", embeddings.size()
+                "chunksCreated", embeddings
         ));
     }
 }
