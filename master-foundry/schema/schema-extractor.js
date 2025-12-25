@@ -7,6 +7,15 @@ export class SchemaExtractor {
     constructor() {
         this.systemId = game.system.id;
         this.systemVersion = game.system.version;
+        
+        // Log availability of system model
+        if (!game.system?.model) {
+            console.warn('[AI-GM SchemaExtractor] game.system.model is not available at initialization');
+        } else {
+            console.log('[AI-GM SchemaExtractor] Initialized for system:', this.systemId);
+            console.log('[AI-GM SchemaExtractor] Actor types available:', Object.keys(game.system.model.Actor || {}));
+            console.log('[AI-GM SchemaExtractor] Item types available:', Object.keys(game.system.model.Item || {}));
+        }
     }
 
     /**
@@ -14,6 +23,16 @@ export class SchemaExtractor {
      * @returns {Object} Map of actor types to their schema definitions
      */
     extractActorSchemas() {
+        if (!game.system?.model?.Actor) {
+            console.warn('[AI-GM] game.system.model.Actor is not available yet');
+            return {
+                systemId: this.systemId,
+                systemVersion: this.systemVersion,
+                actorTypes: {},
+                timestamp: Date.now()
+            };
+        }
+
         const actorModel = game.system.model.Actor;
         const schemas = {};
 
@@ -34,6 +53,16 @@ export class SchemaExtractor {
      * @returns {Object} Map of item types to their schema definitions
      */
     extractItemSchemas() {
+        if (!game.system?.model?.Item) {
+            console.warn('[AI-GM] game.system.model.Item is not available yet');
+            return {
+                systemId: this.systemId,
+                systemVersion: this.systemVersion,
+                itemTypes: {},
+                timestamp: Date.now()
+            };
+        }
+
         const itemModel = game.system.model.Item;
         const schemas = {};
 
@@ -55,16 +84,50 @@ export class SchemaExtractor {
      * @returns {Object} Normalized schema with field metadata
      */
     extractActorType(actorType) {
-        const actorModel = game.system.model.Actor;
-
-        if (!actorModel[actorType]) {
-            throw new Error(`Actor type "${actorType}" not found in system ${this.systemId}`);
+        // Try standard approach first (Foundry v10+)
+        if (game.system?.model?.Actor?.[actorType]) {
+            const actorModel = game.system.model.Actor;
+            return {
+                systemId: this.systemId,
+                actorType: actorType,
+                fields: this._normalizeSchema(actorModel[actorType], `system`),
+                timestamp: Date.now()
+            };
         }
 
+        // Fallback: Extract from template actor or first existing actor
+        console.warn(`[AI-GM] game.system.model.Actor.${actorType} is not available. Using fallback extraction.`);
+
+        // Try to get template data
+        const templateData = this._extractFromTemplate(actorType);
+        if (templateData) {
+            return {
+                systemId: this.systemId,
+                actorType: actorType,
+                fields: templateData,
+                timestamp: Date.now()
+            };
+        }
+
+        // Last resort: find an existing actor of this type
+        const existingActor = game.actors?.find(a => a.type === actorType);
+        if (existingActor) {
+            console.log(`[AI-GM] Extracting schema from existing actor: ${existingActor.name}`);
+            const fields = this._normalizeSchema(existingActor.system, 'system');
+            return {
+                systemId: this.systemId,
+                actorType: actorType,
+                fields: fields,
+                timestamp: Date.now()
+            };
+        }
+
+        // No data available
+        console.error(`[AI-GM] Cannot extract schema for actor type "${actorType}". No template or existing actors found.`);
         return {
             systemId: this.systemId,
             actorType: actorType,
-            fields: this._normalizeSchema(actorModel[actorType], `system`),
+            fields: [],
             timestamp: Date.now()
         };
     }
@@ -233,7 +296,35 @@ export class SchemaExtractor {
      * @returns {Array<string>} List of actor type identifiers
      */
     getActorTypes() {
-        return Object.keys(game.system.model.Actor);
+        // Try standard approach first (Foundry v10+)
+        if (game.system?.model?.Actor) {
+            return Object.keys(game.system.model.Actor);
+        }
+
+        // Fallback 1: Use CONFIG.Actor.typeLabels (common in many systems)
+        if (CONFIG.Actor?.typeLabels) {
+            console.log('[AI-GM] Using CONFIG.Actor.typeLabels for actor types');
+            return Object.keys(CONFIG.Actor.typeLabels);
+        }
+
+        // Fallback 2: Check system template.json data types
+        if (game.system?.template?.Actor?.types) {
+            console.log('[AI-GM] Using system template Actor types');
+            return game.system.template.Actor.types;
+        }
+
+        // Fallback 3: Extract from existing actors
+        if (game.actors?.size > 0) {
+            const types = new Set();
+            for (const actor of game.actors) {
+                types.add(actor.type);
+            }
+            console.log('[AI-GM] Extracted actor types from existing actors:', Array.from(types));
+            return Array.from(types);
+        }
+
+        console.warn('[AI-GM] Could not determine actor types. Falling back to ["character"]');
+        return ['character']; // Ultimate fallback
     }
 
     /**
@@ -241,6 +332,10 @@ export class SchemaExtractor {
      * @returns {Array<string>} List of item type identifiers
      */
     getItemTypes() {
+        if (!game.system?.model?.Item) {
+            console.warn('[AI-GM] game.system.model.Item is not available yet');
+            return [];
+        }
         return Object.keys(game.system.model.Item);
     }
 
@@ -272,6 +367,35 @@ export class SchemaExtractor {
         }
 
         return labels;
+    }
+
+    /**
+     * Extract schema from template data (for systems without exposed model)
+     * @private
+     */
+    _extractFromTemplate(actorType) {
+        // Try to get from system template
+        if (game.system?.template?.Actor?.[actorType]) {
+            console.log(`[AI-GM] Extracting from system template for ${actorType}`);
+            return this._normalizeSchema(game.system.template.Actor[actorType], 'system');
+        }
+
+        // Try DocumentClass default data
+        try {
+            const ActorClass = CONFIG.Actor.documentClass;
+            if (ActorClass) {
+                // Try to create a temporary actor to get its structure
+                const tempData = ActorClass.defaultData?.({ type: actorType });
+                if (tempData?.system) {
+                    console.log(`[AI-GM] Extracting from defaultData for ${actorType}`);
+                    return this._normalizeSchema(tempData.system, 'system');
+                }
+            }
+        } catch (error) {
+            console.warn('[AI-GM] Could not extract from defaultData:', error);
+        }
+
+        return null;
     }
 }
 

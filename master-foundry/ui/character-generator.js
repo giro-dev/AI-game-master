@@ -3,65 +3,461 @@
  * Provides GM interface for AI-driven character generation
  */
 
-export class CharacterGeneratorUI extends FormApplication {
-    constructor(options = {}) {
-        super({}, options);
+export class CharacterGeneratorUI {
+    constructor() {
         this.characterData = null;
         this.blueprint = null;
         this.validationErrors = [];
+        this.dialog = null;
+        this.selectedActorType = 'character';
+        this.actorFields = [];
+        this.selectedFields = new Set(); // Track selected field paths
     }
 
-    static get defaultOptions() {
-        return foundry.utils.mergeObject(super.defaultOptions, {
-            id: 'ai-character-generator',
-            title: 'AI Character Generator',
-            template: 'modules/ai-gm/templates/character-generator.html',
-            classes: ['ai-gm', 'character-generator'],
-            width: 600,
-            height: 'auto',
-            closeOnSubmit: false,
-            submitOnChange: false,
-            tabs: [{navSelector: '.tabs', contentSelector: '.content', initial: 'generate'}]
-        });
-    }
-
-    getData() {
-        const context = super.getData();
-
-        context.systemId = game.system.id;
-        context.systemName = game.system.title;
-
-        // Get available actor types from the blueprint generator
-        if (game.aiGM?.blueprintGenerator) {
-            context.actorTypes = game.aiGM.blueprintGenerator.schemaExtractor.getActorTypes();
-            context.actorTypeLabels = game.aiGM.blueprintGenerator.schemaExtractor.getActorTypeLabels();
-        } else {
-            context.actorTypes = ['character'];
-            context.actorTypeLabels = { character: 'Character' };
+    render(force = false) {
+        if (this.dialog && !force) {
+            this.dialog.render(true);
+            return;
         }
 
-        context.hasAdapter = game.aiGM?.adapterRegistry?.hasAdapterForCurrentSystem() || false;
-        context.adapterName = game.aiGM?.adapterRegistry?.getActive()?.getName() || 'None';
+        // Initialize fields for the selected actor type if not already loaded
+        if (this.actorFields.length === 0 && game.aiGM?.blueprintGenerator) {
+            try {
+                console.log('[AI-GM Character Gen] Loading fields for actor type:', this.selectedActorType);
+                const schema = game.aiGM.blueprintGenerator.schemaExtractor.extractActorType(this.selectedActorType);
+                console.log('[AI-GM Character Gen] Schema extracted:', schema);
+                this.actorFields = schema.fields;
+                console.log('[AI-GM Character Gen] Actor fields loaded:', this.actorFields.length);
 
-        context.characterData = this.characterData;
-        context.validationErrors = this.validationErrors;
+                // By default, select all fields
+                this.selectedFields.clear();
+                for (const field of this.actorFields) {
+                    this.selectedFields.add(field.path);
+                }
+                console.log('[AI-GM Character Gen] Selected fields:', this.selectedFields.size);
+            } catch (error) {
+                console.error('[AI-GM] Error loading actor fields:', error);
+            }
+        }
 
-        return context;
+        const content = this._getHTML();
+
+        this.dialog = new Dialog({
+            title: 'AI Character Generator',
+            content: content,
+            buttons: {},
+            render: (html) => this._activateListeners(html),
+            close: () => {
+                this.characterData = null;
+                this.validationErrors = [];
+            }
+        }, {
+            width: 600,
+            height: 'auto',
+            classes: ['ai-gm', 'character-generator']
+        });
+
+        this.dialog.render(true);
     }
 
-    activateListeners(html) {
-        super.activateListeners(html);
+    _getHTML() {
+        const systemId = game.system.id;
+        const systemName = game.system.title;
 
+        let actorTypes = ['character'];
+        let actorTypeLabels = { character: 'Character' };
+
+        if (game.aiGM?.blueprintGenerator) {
+            try {
+                const schemaExtractor = game.aiGM.blueprintGenerator.schemaExtractor;
+                actorTypes = schemaExtractor.getActorTypes();
+                actorTypeLabels = schemaExtractor.getActorTypeLabels();
+                console.log('[AI-GM Character Gen] Actor types available:', actorTypes);
+                console.log('[AI-GM Character Gen] Actor type labels:', actorTypeLabels);
+            } catch (error) {
+                console.warn('[AI-GM] Could not extract actor types:', error);
+                // Fall back to defaults
+            }
+        }
+
+        let actorTypeOptions = '';
+        for (const type of actorTypes) {
+            const selected = type === this.selectedActorType ? 'selected' : '';
+            actorTypeOptions += `<option value="${type}" ${selected}>${actorTypeLabels[type] || type}</option>`;
+        }
+
+        // Build field selector tree view
+        let fieldSelectorHTML = '';
+        console.log('[AI-GM Character Gen] Building field selector, actorFields.length:', this.actorFields.length);
+        if (this.actorFields.length > 0) {
+            fieldSelectorHTML = `
+                <div class="form-group field-selector">
+                    <label>
+                        Select Fields for AI Generation:
+                        <button type="button" id="select-all-fields" class="small-btn">Select All</button>
+                        <button type="button" id="deselect-all-fields" class="small-btn">Deselect All</button>
+                    </label>
+                    <div class="field-tree">
+                        ${this._buildFieldTree(this.actorFields)}
+                    </div>
+                    <p class="hint">Selected fields will be generated by AI. Unselected fields will use default values.</p>
+                </div>
+            `;
+        } else {
+            console.warn('[AI-GM Character Gen] No actor fields to display!');
+            fieldSelectorHTML = `
+                <div class="form-group field-selector">
+                    <label>Select Fields for AI Generation:</label>
+                    <p class="hint" style="color: orange;">Loading fields... If this persists, the system may not have exposed field data.</p>
+                </div>
+            `;
+        }
+
+        let characterSection = '';
+        if (this.characterData) {
+            let validationHTML = '';
+            if (this.validationErrors.length > 0) {
+                validationHTML = `
+                    <div class="validation-errors">
+                        <h4>Validation Warnings:</h4>
+                        <ul>
+                            ${this.validationErrors.map(err => `<li><strong>${err.field}:</strong> ${err.message}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            characterSection = `
+                <div class="generated-character">
+                    <h3>Generated Character: ${this.characterData.actor.name}</h3>
+                    ${validationHTML}
+                    <div class="button-row">
+                        <button type="button" id="create-character" class="create-btn">
+                            <i class="fas fa-user-plus"></i> Create in Foundry
+                        </button>
+                        <button type="button" id="export-json" class="export-btn">
+                            <i class="fas fa-download"></i> Export JSON
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <form class="ai-character-generator">
+                <div class="form-group">
+                    <label for="actorType">Character Type:</label>
+                    <select name="actorType" id="actorType">
+                        ${actorTypeOptions}
+                    </select>
+                </div>
+
+                ${fieldSelectorHTML}
+
+                <div class="form-group">
+                    <label for="language">Language:</label>
+                    <select name="language" id="language">
+                        <option value="en">English</option>
+                        <option value="es">Español</option>
+                        <option value="ca">Català</option>
+                        <option value="fr">Français</option>
+                        <option value="de">Deutsch</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="prompt">Character Description:</label>
+                    <textarea name="prompt" id="prompt" rows="4" placeholder="Describe the character you want to create..."></textarea>
+                    <p class="hint">Example: "A brave elven ranger who protects the forest"</p>
+                </div>
+
+                <div class="form-group">
+                    <label>System: ${systemName} (${systemId})</label>
+                </div>
+
+                <div class="button-row">
+                    <button type="button" id="generate-character" class="generate-btn">
+                        <i class="fas fa-magic"></i> Generate Character
+                    </button>
+                    <button type="button" id="view-blueprint" class="blueprint-btn">
+                        <i class="fas fa-file-code"></i> View Blueprint
+                    </button>
+                </div>
+
+                ${characterSection}
+            </form>
+
+            <style>
+                .ai-character-generator .form-group {
+                    margin-bottom: 1rem;
+                }
+                
+                .ai-character-generator label {
+                    display: block;
+                    font-weight: bold;
+                    margin-bottom: 0.25rem;
+                }
+                
+                .ai-character-generator input,
+                .ai-character-generator select,
+                .ai-character-generator textarea {
+                    width: 100%;
+                    padding: 0.5rem;
+                    border: 1px solid #7a7971;
+                    background: rgba(0, 0, 0, 0.05);
+                }
+                
+                .ai-character-generator .hint {
+                    font-size: 0.85rem;
+                    font-style: italic;
+                    color: #777;
+                    margin-top: 0.25rem;
+                }
+                
+                .ai-character-generator .button-row {
+                    display: flex;
+                    gap: 0.5rem;
+                    margin-top: 1rem;
+                }
+                
+                .ai-character-generator button {
+                    flex: 1;
+                    padding: 0.5rem 1rem;
+                    cursor: pointer;
+                }
+
+                .ai-character-generator .small-btn {
+                    flex: none;
+                    padding: 0.25rem 0.5rem;
+                    font-size: 0.85rem;
+                    margin-left: 0.5rem;
+                }
+                
+                .validation-errors {
+                    background: #fff3cd;
+                    border: 1px solid #ffc107;
+                    padding: 0.5rem;
+                    margin: 1rem 0;
+                    border-radius: 4px;
+                }
+                
+                .validation-errors ul {
+                    margin: 0.5rem 0 0 1.5rem;
+                }
+                
+                .generated-character {
+                    margin-top: 1rem;
+                    padding-top: 1rem;
+                    border-top: 1px solid #7a7971;
+                }
+
+                .field-selector {
+                    background: rgba(0, 0, 0, 0.02);
+                    padding: 0.75rem;
+                    border: 1px solid #7a7971;
+                    border-radius: 4px;
+                }
+
+                .field-tree {
+                    max-height: 300px;
+                    overflow-y: auto;
+                    background: white;
+                    border: 1px solid #ccc;
+                    padding: 0.5rem;
+                    margin-top: 0.5rem;
+                }
+
+                .field-item {
+                    padding: 0.25rem 0;
+                    display: flex;
+                    align-items: center;
+                }
+
+                .field-item input[type="checkbox"] {
+                    width: auto;
+                    margin-right: 0.5rem;
+                }
+
+                .field-item .field-label {
+                    flex: 1;
+                }
+
+                .field-item .field-type {
+                    font-size: 0.8rem;
+                    color: #666;
+                    margin-left: 0.5rem;
+                }
+
+                .field-item.nested {
+                    padding-left: 1.5rem;
+                }
+
+                .field-item.nested-2 {
+                    padding-left: 3rem;
+                }
+
+                .field-item.nested-3 {
+                    padding-left: 4.5rem;
+                }
+            </style>
+        `;
+    }
+
+    _activateListeners(html) {
+        html.find('#actorType').change(this._onActorTypeChange.bind(this));
         html.find('#generate-character').click(this._onGenerateCharacter.bind(this));
         html.find('#create-character').click(this._onCreateCharacter.bind(this));
         html.find('#view-blueprint').click(this._onViewBlueprint.bind(this));
         html.find('#export-json').click(this._onExportJSON.bind(this));
+        html.find('#select-all-fields').click(this._onSelectAllFields.bind(this));
+        html.find('#deselect-all-fields').click(this._onDeselectAllFields.bind(this));
+        html.find('.field-checkbox').change(this._onFieldCheckboxChange.bind(this));
+    }
+
+    /**
+     * Build a tree view HTML for fields
+     * @private
+     */
+    _buildFieldTree(fields) {
+        // Group fields by their path hierarchy
+        const tree = this._buildFieldHierarchy(fields);
+        return this._renderFieldNode(tree, 0);
+    }
+
+    /**
+     * Build a hierarchical structure from flat field list
+     * @private
+     */
+    _buildFieldHierarchy(fields) {
+        const root = { children: {}, fields: [] };
+
+        for (const field of fields) {
+            const parts = field.path.split('.');
+            let current = root;
+
+            for (let i = 0; i < parts.length - 1; i++) {
+                const part = parts[i];
+                if (!current.children[part]) {
+                    current.children[part] = { children: {}, fields: [] };
+                }
+                current = current.children[part];
+            }
+
+            current.fields.push(field);
+        }
+
+        return root;
+    }
+
+    /**
+     * Render a node in the field tree
+     * @private
+     */
+    _renderFieldNode(node, depth) {
+        let html = '';
+
+        // Render fields at this level
+        for (const field of node.fields) {
+            const checked = this.selectedFields.has(field.path) ? 'checked' : '';
+            const nestedClass = depth > 0 ? `nested nested-${Math.min(depth, 3)}` : '';
+
+            html += `
+                <div class="field-item ${nestedClass}">
+                    <input type="checkbox" 
+                           class="field-checkbox" 
+                           data-field-path="${field.path}" 
+                           ${checked}>
+                    <span class="field-label">${field.label}</span>
+                    <span class="field-type">[${field.type}]</span>
+                </div>
+            `;
+        }
+
+        // Render child nodes
+        for (const [key, child] of Object.entries(node.children)) {
+            if (child.fields.length > 0 || Object.keys(child.children).length > 0) {
+                html += this._renderFieldNode(child, depth + 1);
+            }
+        }
+
+        return html;
+    }
+
+    /**
+     * Handle actor type change - load fields for the selected type
+     * @private
+     */
+    async _onActorTypeChange(event) {
+        const actorType = event.target.value;
+        this.selectedActorType = actorType;
+
+        // Extract fields for this actor type
+        try {
+            const schema = game.aiGM.blueprintGenerator.schemaExtractor.extractActorType(actorType);
+            this.actorFields = schema.fields;
+
+            // By default, select all fields
+            this.selectedFields.clear();
+            for (const field of this.actorFields) {
+                this.selectedFields.add(field.path);
+            }
+
+            // Re-render the dialog
+            this.render(true);
+        } catch (error) {
+            console.error('[AI-GM] Error loading actor fields:', error);
+            ui.notifications.error('Failed to load actor fields');
+        }
+    }
+
+    /**
+     * Handle field checkbox change
+     * @private
+     */
+    _onFieldCheckboxChange(event) {
+        const checkbox = event.target;
+        const fieldPath = checkbox.dataset.fieldPath;
+
+        if (checkbox.checked) {
+            this.selectedFields.add(fieldPath);
+        } else {
+            this.selectedFields.delete(fieldPath);
+        }
+    }
+
+    /**
+     * Select all fields
+     * @private
+     */
+    _onSelectAllFields(event) {
+        event.preventDefault();
+        const html = $(event.currentTarget).closest('.dialog-content');
+
+        this.selectedFields.clear();
+        for (const field of this.actorFields) {
+            this.selectedFields.add(field.path);
+        }
+
+        html.find('.field-checkbox').prop('checked', true);
+    }
+
+    /**
+     * Deselect all fields
+     * @private
+     */
+    _onDeselectAllFields(event) {
+        event.preventDefault();
+        const html = $(event.currentTarget).closest('.dialog-content');
+
+        this.selectedFields.clear();
+        html.find('.field-checkbox').prop('checked', false);
     }
 
     async _onGenerateCharacter(event) {
         event.preventDefault();
 
-        const form = this.element.find('form')[0];
+        const html = $(event.currentTarget).closest('.dialog-content');
+        const form = html.find('form')[0];
         const formData = new FormData(form);
 
         const actorType = formData.get('actorType') || 'character';
@@ -73,14 +469,45 @@ export class CharacterGeneratorUI extends FormApplication {
             return;
         }
 
+        // Check if any fields are selected
+        if (this.selectedFields.size === 0) {
+            ui.notifications.warn('Please select at least one field for AI generation');
+            return;
+        }
+
         // Show loading state
-        const button = this.element.find('#generate-character');
-        button.prop('disabled', true).text('Generating...');
+        const button = html.find('#generate-character');
+        const originalText = button.text();
+        button.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Generating...');
 
         try {
-            // Generate blueprint
-            const blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(actorType);
+            // Generate blueprint with only selected fields
+            const selectedFieldsArray = Array.from(this.selectedFields);
+            const blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(actorType, selectedFieldsArray);
             this.blueprint = blueprint;
+
+            // Get WebSocket session ID if available
+            const sessionId = game.aiGM.wsClient?.getSessionId();
+
+            // Setup WebSocket listener for this generation (if connected)
+            if (game.aiGM.wsClient?.isConnected()) {
+                const progressHandler = (data) => {
+                    console.log('[Character Gen] Progress:', data);
+                    if (data.currentStep) {
+                        button.html(`<i class="fas fa-spinner fa-spin"></i> ${data.currentStep}`);
+                    }
+                };
+
+                const completedHandler = (data) => {
+                    console.log('[Character Gen] Completed via WebSocket:', data);
+                    // WebSocket will deliver the final result
+                    game.aiGM.wsClient.off('onCharacterGenerationStarted', progressHandler);
+                    game.aiGM.wsClient.off('onCharacterGenerationCompleted', completedHandler);
+                };
+
+                game.aiGM.wsClient.on('onCharacterGenerationStarted', progressHandler);
+                game.aiGM.wsClient.on('onCharacterGenerationCompleted', completedHandler);
+            }
 
             // Call backend API
             const response = await fetch('http://localhost:8080/gm/character/generate', {
@@ -90,7 +517,8 @@ export class CharacterGeneratorUI extends FormApplication {
                     prompt: prompt,
                     actorType: actorType,
                     blueprint: blueprint,
-                    language: language
+                    language: language,
+                    sessionId: sessionId // Include session ID for WebSocket updates
                 })
             });
 
@@ -101,15 +529,10 @@ export class CharacterGeneratorUI extends FormApplication {
             const data = await response.json();
             this.characterData = data.character;
 
-            // Validate
-            const adapter = game.aiGM.adapterRegistry.getActive();
-            if (adapter) {
-                this.characterData = adapter.preprocessAIData(this.characterData);
-            }
-
+            // Validate (without adapter preprocessing)
             const validation = game.aiGM.blueprintGenerator.validateCharacter(
                 this.characterData,
-                game.aiGM.blueprintGenerator.generateBlueprint(actorType)
+                game.aiGM.blueprintGenerator.generateBlueprint(actorType, selectedFieldsArray)
             );
 
             this.validationErrors = validation.errors;
@@ -120,13 +543,13 @@ export class CharacterGeneratorUI extends FormApplication {
                 ui.notifications.warn(`Character generated with ${validation.errors.length} validation warnings`);
             }
 
-            this.render();
+            // Re-render the dialog with the new character data
+            this.render(true);
 
         } catch (error) {
             console.error('AI Character Generation Error:', error);
             ui.notifications.error(`Failed to generate character: ${error.message}`);
-        } finally {
-            button.prop('disabled', false).text('Generate Character');
+            button.prop('disabled', false).html(originalText);
         }
     }
 
@@ -155,11 +578,6 @@ export class CharacterGeneratorUI extends FormApplication {
                 ui.notifications.info(`Added ${items.length} items to ${actor.name}`);
             }
 
-            // Apply post-processing
-            const adapter = game.aiGM.adapterRegistry.getActive();
-            if (adapter) {
-                await adapter.postProcess(actor);
-            }
 
             // Open the character sheet
             actor.sheet.render(true);
@@ -167,7 +585,9 @@ export class CharacterGeneratorUI extends FormApplication {
             // Clear form and close
             this.characterData = null;
             this.validationErrors = [];
-            this.close();
+            if (this.dialog) {
+                this.dialog.close();
+            }
 
         } catch (error) {
             console.error('Character Creation Error:', error);
@@ -178,11 +598,14 @@ export class CharacterGeneratorUI extends FormApplication {
     async _onViewBlueprint(event) {
         event.preventDefault();
 
-        const form = this.element.find('form')[0];
+        const html = $(event.currentTarget).closest('.dialog-content');
+        const form = html.find('form')[0];
         const formData = new FormData(form);
         const actorType = formData.get('actorType') || 'character';
 
-        const blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(actorType);
+        // Use selected fields if any are selected
+        const selectedFieldsArray = this.selectedFields.size > 0 ? Array.from(this.selectedFields) : null;
+        const blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(actorType, selectedFieldsArray);
 
         // Display in console and show dialog
         console.log('Blueprint for', actorType, blueprint);
@@ -222,131 +645,5 @@ export class CharacterGeneratorUI extends FormApplication {
         // Also show in console
         console.log('Character Data:', this.characterData);
     }
-}
-
-/**
- * Simple HTML template fallback if template file doesn't exist
- */
-export function getCharacterGeneratorHTML() {
-    return `
-<form class="ai-character-generator">
-    <div class="form-group">
-        <label for="actorType">Character Type:</label>
-        <select name="actorType" id="actorType">
-            {{#each actorTypes}}
-            <option value="{{this}}">{{lookup ../actorTypeLabels this}}</option>
-            {{/each}}
-        </select>
-    </div>
-
-    <div class="form-group">
-        <label for="language">Language:</label>
-        <select name="language" id="language">
-            <option value="en">English</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-        </select>
-    </div>
-
-    <div class="form-group">
-        <label for="prompt">Character Description:</label>
-        <textarea name="prompt" id="prompt" rows="4" placeholder="Describe the character you want to create..."></textarea>
-        <p class="hint">Example: "A brave elven ranger who protects the forest" or "Un detective cínico con un pasado oscuro"</p>
-    </div>
-
-    <div class="form-group">
-        <label>System: {{systemName}} ({{systemId}})</label>
-        <p class="hint">Adapter: {{adapterName}}</p>
-    </div>
-
-    <div class="button-row">
-        <button type="button" id="generate-character" class="generate-btn">
-            <i class="fas fa-magic"></i> Generate Character
-        </button>
-        <button type="button" id="view-blueprint" class="blueprint-btn">
-            <i class="fas fa-file-code"></i> View Blueprint
-        </button>
-    </div>
-
-    {{#if characterData}}
-    <div class="generated-character">
-        <h3>Generated Character: {{characterData.actor.name}}</h3>
-        
-        {{#if validationErrors.length}}
-        <div class="validation-errors">
-            <h4>Validation Warnings:</h4>
-            <ul>
-                {{#each validationErrors}}
-                <li><strong>{{this.field}}:</strong> {{this.message}}</li>
-                {{/each}}
-            </ul>
-        </div>
-        {{/if}}
-
-        <div class="button-row">
-            <button type="button" id="create-character" class="create-btn">
-                <i class="fas fa-user-plus"></i> Create in Foundry
-            </button>
-            <button type="button" id="export-json" class="export-btn">
-                <i class="fas fa-download"></i> Export JSON
-            </button>
-        </div>
-    </div>
-    {{/if}}
-</form>
-
-<style>
-    .ai-character-generator .form-group {
-        margin-bottom: 1rem;
-    }
-    
-    .ai-character-generator label {
-        display: block;
-        font-weight: bold;
-        margin-bottom: 0.25rem;
-    }
-    
-    .ai-character-generator input,
-    .ai-character-generator select,
-    .ai-character-generator textarea {
-        width: 100%;
-        padding: 0.5rem;
-        border: 1px solid #7a7971;
-        background: rgba(0, 0, 0, 0.05);
-    }
-    
-    .ai-character-generator .hint {
-        font-size: 0.85rem;
-        font-style: italic;
-        color: #777;
-        margin-top: 0.25rem;
-    }
-    
-    .ai-character-generator .button-row {
-        display: flex;
-        gap: 0.5rem;
-        margin-top: 1rem;
-    }
-    
-    .ai-character-generator button {
-        flex: 1;
-        padding: 0.5rem 1rem;
-        cursor: pointer;
-    }
-    
-    .validation-errors {
-        background: #fff3cd;
-        border: 1px solid #ffc107;
-        padding: 0.5rem;
-        margin: 1rem 0;
-        border-radius: 4px;
-    }
-    
-    .validation-errors ul {
-        margin: 0.5rem 0 0 1.5rem;
-    }
-</style>
-`;
 }
 

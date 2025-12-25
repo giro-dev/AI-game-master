@@ -1,33 +1,95 @@
 import { handleAiResponse, CharacterAPI } from "./api.js";
 import { SchemaExtractor } from "./schema/schema-extractor.js";
 import { BlueprintGenerator } from "./blueprints/blueprint-generator.js";
-import { AdapterRegistry } from "./adapters/base-adapter.js";
-import { Dnd5eAdapter } from "./adapters/dnd5e-adapter.js";
-import { HitosAdapter } from "./adapters/hitos-adapter.js";
 import { CharacterGeneratorUI } from "./ui/character-generator.js";
+import { ItemGeneratorUI } from "./ui/item-generator.js";
+import { WebSocketClient } from "./websocket-client.js";
 
 Hooks.on("ready", () => {
     console.log("AI GM module loaded");
 
-    // Initialize adapter registry
-    const adapterRegistry = new AdapterRegistry();
+    // Check if game.system.model is available
+    if (!game.system?.model) {
+        console.error('[AI-GM] game.system.model is not available. The AI GM character generator may not work properly.');
+        ui.notifications.warn('AI GM: System model not available. Character generation may be limited.');
+    }
 
-    // Register system adapters
-    adapterRegistry.register(new Dnd5eAdapter());
-    adapterRegistry.register(new HitosAdapter());
+    // Register a setting to remember the default item pack
+    if (!game.settings?.settings?.has('ai-gm.defaultItemPack')) {
+        game.settings.register('ai-gm', 'defaultItemPack', {
+            name: 'Default Item Pack',
+            scope: 'world',
+            config: false,
+            type: String,
+            default: ''
+        });
+    }
 
-    // Get active adapter
-    const activeAdapter = adapterRegistry.getActive();
+    // Initialize blueprint generator (system-agnostic)
+    const blueprintGenerator = new BlueprintGenerator();
 
-    // Initialize blueprint generator with adapter
-    const blueprintGenerator = new BlueprintGenerator(activeAdapter);
+    // Initialize WebSocket client
+    const wsClient = new WebSocketClient('http://localhost:8080');
+
+    // Setup WebSocket event handlers
+    wsClient.on('onCharacterGenerationCompleted', (data) => {
+        console.log('[AI-GM] Character generation completed:', data);
+        // You can add custom handling here
+    });
+
+    wsClient.on('onImageGenerationCompleted', (data) => {
+        console.log('[AI-GM] Image generation completed:', data);
+        // Update character/token with new image
+        if (data.imagePath) {
+            ui.notifications.info(`Image ready: ${data.imagePath}`);
+        }
+    });
+
+    wsClient.on('onItemGenerationStarted', (data) => {
+        ui.notifications.info('Generating items...');
+    });
+
+    wsClient.on('onItemGenerationFailed', (message) => {
+        ui.notifications.error(`Item generation failed: ${message.error || 'unknown error'}`);
+    });
+
+    wsClient.on('onItemGenerationCompleted', async (event) => {
+        const { items = [], packId, requestId } = event || {};
+        if (!items.length) {
+            ui.notifications.warn('No items returned');
+            return;
+        }
+        const pack = packId ? game.packs.get(packId) : null;
+        if (!pack) {
+            ui.notifications.error(`Pack not found: ${packId || 'none provided'}`);
+            return;
+        }
+        try {
+            const created = [];
+            for (const itemData of items) {
+                const tempItem = await Item.create(itemData, { temporary: true });
+                const doc = await pack.importDocument(tempItem);
+                created.push(doc.name);
+            }
+            ui.notifications.info(`Imported ${created.length} items to ${packId}`);
+        } catch (err) {
+            console.error('[AI-GM] Failed importing items', err);
+            ui.notifications.error(`Failed importing items: ${err.message}`);
+        }
+    });
+
+    // Connect to WebSocket
+    wsClient.connect().catch(err => {
+        console.warn('[AI-GM] WebSocket connection failed:', err);
+        ui.notifications.warn('Real-time updates disabled. Using HTTP only.');
+    });
 
     game.aiGM = {
         // Character generation components
         schemaExtractor: new SchemaExtractor(),
         blueprintGenerator: blueprintGenerator,
-        adapterRegistry: adapterRegistry,
         CharacterAPI: CharacterAPI,
+        wsClient: wsClient, // Expose WebSocket client
 
         /**
          * Send a prompt to the AI Game Master along with token abilities
@@ -82,13 +144,21 @@ Hooks.on("ready", () => {
         },
 
         /**
+         * Open the item generator UI
+         */
+        openItemGenerator() {
+            new ItemGeneratorUI().render(true);
+        },
+
+        /**
          * Generate a character from a prompt (programmatic API)
          * @param {string} prompt - Character description
          * @param {string} actorType - Actor type to generate
          * @param {string} language - Language for generation
+         * @param {Array<string>} selectedFields - Optional: specific fields to generate
          */
-        async generateCharacter(prompt, actorType = 'character', language = 'en') {
-            const blueprint = blueprintGenerator.generateAIBlueprint(actorType);
+        async generateCharacter(prompt, actorType = 'character', language = 'en', selectedFields = null) {
+            const blueprint = blueprintGenerator.generateAIBlueprint(actorType, selectedFields);
 
             try {
                 const response = await fetch('http://localhost:8080/gm/character/generate', {
@@ -118,7 +188,6 @@ Hooks.on("ready", () => {
 
     // Log system information
     console.log(`[AI-GM] System: ${game.system.id} (${game.system.title})`);
-    console.log(`[AI-GM] Active Adapter: ${activeAdapter ? activeAdapter.getName() : 'None'}`);
     console.log(`[AI-GM] Available Actor Types:`, blueprintGenerator.schemaExtractor.getActorTypes());
 });
 
@@ -250,7 +319,7 @@ Hooks.on("renderActorDirectory", (app, html, data) => {
     if (!game.user.isGM) return;
 
     const button = $(`
-        <button class="ai-gm-generate-character" style="width: 100%; margin: 5px 0;">
+        <button class="ai-gm-generate-character" style="width: 100%; height: 30px; margin: 5px 0;">
             <i class="fas fa-magic"></i> AI Character Generator
         </button>
     `);
@@ -286,5 +355,14 @@ Hooks.on("getActorDirectoryEntryContext", (html, options) => {
                 ui.notifications.error(`Failed to explain character: ${error.message}`);
             }
         }
+    });
+
+    // Register a control button for item generation (optional)
+    Hooks.on('getActorDirectoryEntryContext', (html, entries) => {
+        entries.push({
+            name: 'AI Item Generator',
+            icon: '<i class="fas fa-hat-wizard"></i>',
+            callback: () => game.aiGM.openItemGenerator()
+        });
     });
 });

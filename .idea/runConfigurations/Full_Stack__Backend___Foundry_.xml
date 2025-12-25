@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Full Stack (Backend + Foundry)" type="CompoundRunConfigurationType">
+    <toRun name="MasterServerApplication" type="SpringBootApplicationConfigurationType" />
+    <toRun name="Foundry VTT (Dev)" type="ShConfigurationType" />
+    <method v="2" />
+  </configuration>
+</component>

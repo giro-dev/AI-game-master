@@ -1,8 +1,8 @@
 {
   "id": "ai-gm",
   "title": "AI Game Master Connector",
-  "description": "An AI-powered Game Master assistant that understands player intent and executes abilities automatically.",
-  "version": "0.0.1",
+  "description": "An AI-powered Game Master assistant that understands player intent and executes abilities automatically. Includes system-agnostic character generation.",
+  "version": "0.1.0",
   "compatibility": {
     "minimum": "11",
     "verified": "12"
@@ -12,8 +12,23 @@
       "name": "AI GM Developer"
     }
   ],
-  "esmodules": ["main.js"],
+  "scripts": [
+    "https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js",
+    "https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"
+  ],
+  "esmodules": [
+    "schema/schema-extractor.js",
+    "blueprints/blueprint-generator.js",
+    "ui/character-generator.js",
+    "ui/item-generator.js",
+    "websocket-client.js",
+    "api.js",
+    "main.js"
+  ],
   "styles": [],
   "languages": [],
-  "socket": false
+  "socket": false,
+  "templates": [
+    "templates/item-generator.html"
+  ]
 }

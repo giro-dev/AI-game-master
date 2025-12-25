@@ -1,0 +1,16 @@
+<form>
+  <div class="form-group">
+    <label>Prompt</label>
+    <textarea name="prompt" rows="4" style="width: 100%;"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Compendium Pack</label>
+    <select name="packId" style="width: 100%;">
+      {{#each packs}}
+      <option value="{{id}}" {{#ifEquals ../packId id}}selected{{/ifEquals}}>{{label}}</option>
+      {{/each}}
+    </select>
+  </div>
+  <button type="submit" class="btn">Generate Items</button>
+</form>
+

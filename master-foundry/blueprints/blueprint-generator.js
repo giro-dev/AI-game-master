@@ -1,25 +1,30 @@
 /**
- * Blueprint Generator - Creates fillable character blueprints from schema + adapters
+ * Blueprint Generator - Creates fillable character blueprints from schema
  * The blueprint is a contract that defines what CAN be filled for a character
  */
 
 import { SchemaExtractor } from '../schema/schema-extractor.js';
 
 export class BlueprintGenerator {
-    constructor(systemAdapter = null) {
+    constructor() {
         this.schemaExtractor = new SchemaExtractor();
-        this.systemAdapter = systemAdapter;
     }
 
     /**
      * Generate a complete character blueprint for a given actor type
      * @param {string} actorType - The type of actor to generate blueprint for
-     * @param {Object} options - Additional options for blueprint generation
+     * @param {Array<string>} selectedFields - Optional: specific field paths to include (if not provided, includes all)
      * @returns {Object} Complete character blueprint
      */
-    generateBlueprint(actorType, options = {}) {
+    generateBlueprint(actorType, selectedFields = null) {
         // Extract base schema
         const actorSchema = this.schemaExtractor.extractActorType(actorType);
+
+        // Filter fields if selectedFields is provided
+        let fields = actorSchema.fields;
+        if (selectedFields && Array.isArray(selectedFields)) {
+            fields = fields.filter(field => selectedFields.includes(field.path));
+        }
 
         // Get item types that are relevant for this actor
         const itemSchemas = this._getRelevantItemSchemas(actorType);
@@ -34,7 +39,7 @@ export class BlueprintGenerator {
             // Actor fields that can be filled
             actor: {
                 type: actorType,
-                fields: actorSchema.fields,
+                fields: fields,
                 coreFields: this._getCoreFields()
             },
 
@@ -51,10 +56,6 @@ export class BlueprintGenerator {
             }
         };
 
-        // Apply system adapter enhancements if available
-        if (this.systemAdapter) {
-            this.systemAdapter.enhanceBlueprint(blueprint);
-        }
 
         return blueprint;
     }
@@ -62,10 +63,11 @@ export class BlueprintGenerator {
     /**
      * Generate a simplified blueprint for AI consumption
      * @param {string} actorType - The type of actor
+     * @param {Array<string>} selectedFields - Optional: specific field paths to include
      * @returns {Object} Simplified blueprint optimized for AI
      */
-    generateAIBlueprint(actorType) {
-        const fullBlueprint = this.generateBlueprint(actorType);
+    generateAIBlueprint(actorType, selectedFields = null) {
+        const fullBlueprint = this.generateBlueprint(actorType, selectedFields);
 
         return {
             systemId: fullBlueprint.systemId,
@@ -126,10 +128,6 @@ export class BlueprintGenerator {
         const relevantItems = {};
 
         for (const [itemType, schema] of Object.entries(itemSchemas.itemTypes)) {
-            // Filter based on system adapter if available
-            if (this.systemAdapter && !this.systemAdapter.isItemTypeRelevant(actorType, itemType)) {
-                continue;
-            }
 
             relevantItems[itemType] = {
                 type: itemType,
@@ -275,11 +273,6 @@ export class BlueprintGenerator {
             }
         }
 
-        // Apply system adapter validation if available
-        if (this.systemAdapter) {
-            const adapterErrors = this.systemAdapter.validate(characterData, blueprint);
-            errors.push(...adapterErrors);
-        }
 
         return {
             valid: errors.length === 0,

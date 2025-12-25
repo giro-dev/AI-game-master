@@ -128,12 +128,6 @@ export const CharacterAPI = {
             console.warn('[AI-GM] Character validation warnings:', validation.errors);
         }
 
-        // Apply system adapter preprocessing
-        const adapter = game.aiGM?.adapterRegistry?.getActive();
-        if (adapter) {
-            characterData = adapter.preprocessAIData(characterData);
-        }
-
         // Create actor
         const actor = await Actor.create(characterData.actor);
 
@@ -146,10 +140,6 @@ export const CharacterAPI = {
             await actor.createEmbeddedDocuments('Item', characterData.items);
         }
 
-        // Post-process
-        if (adapter) {
-            await adapter.postProcess(actor);
-        }
 
         return actor;
     },
