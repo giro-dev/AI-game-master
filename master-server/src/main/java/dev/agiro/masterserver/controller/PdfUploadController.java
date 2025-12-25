@@ -1,17 +1,13 @@
 package dev.agiro.masterserver.controller;
 
-import dev.agiro.masterserver.embedding.DocumentChunkEntity;
-import dev.agiro.masterserver.embedding.EmbeddingDto;
 import dev.agiro.masterserver.pdf_extractor.PdfProcessingService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.ai.document.Document;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
