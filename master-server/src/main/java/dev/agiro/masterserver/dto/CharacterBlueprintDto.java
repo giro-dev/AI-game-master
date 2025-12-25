@@ -11,6 +11,10 @@ public class CharacterBlueprintDto {
     private String actorType;
     private Long timestamp;
 
+    // New simplified structure from Foundry (flat array of fields)
+    private List<Object> actorFields;
+
+    // Legacy structure (nested)
     private ActorBlueprintDto actor;
     private List<ItemTypeDto> availableItems;
     private List<String> constraints;

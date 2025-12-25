@@ -22,61 +22,67 @@ public class CharacterGenerationService {
     private final RAGService ragService;
     private final GameMasterManualSolver gameMasterManualSolver;
 
-    private static final String CHARACTER_GENERATION_SYSTEM_PROMPT = """
+    private static final String CORE_CONCEPT_SYSTEM_PROMPT = """
             You are an expert character creator for tabletop RPG systems.
-            You will receive:
-            1. A character description/concept from the user
-            2. A blueprint defining what fields MUST be filled for this system
-            3. The target RPG system and actor type
-            4. System-specific rules and guidance for creating this actor type
             
-            Your job is to create a complete, valid character that:
-            - Matches the user's description
-            - Follows the system's rules and constraints
-            - Fills in ALL fields from the actorFields array with appropriate values
-            - Creates relevant items (skills, equipment, abilities, etc.)
+            Create a core concept for a character based on the user's description.
+            Generate ONLY the essential identity fields like name, concepto, biografia, descripcion.
             
-            CRITICAL RULES FOR FILLING FIELDS:
-            - You MUST fill EVERY field listed in the "actorFields" array
-            - Each field has a "path" (e.g., "system.atributos.est") that shows where to place the value in the response
-            - For nested paths like "system.atributos.est", create the nested structure: {"system": {"atributos": {"est": value}}}
-            - Respect field types: "string" for text, "number" for integers, "resource" for numbers with min/max
-            - Respect min/max constraints: never exceed the max value or go below the min value
-            - For "resource" type fields, provide a number that respects the min/max range
-            - For string fields like "concepto", "biografia", "descripcion": provide rich, detailed text
-            - For numeric fields like attributes: distribute points wisely based on the character concept
-            
-            RESPONSE FORMAT:
-            Respond ONLY with valid JSON matching this EXACT structure:
+            Respond ONLY with valid JSON:
             {
-              "character": {
-                "actor": {
-                  "name": "Character Name",
-                  "type": "actorType",
-                  "img": "icons/svg/mystery-man.svg",
-                  "system": {
-                    // ALL fields from actorFields must be filled here
-                    // Use the exact nested structure from the field paths
-                    // Example: for path "system.atributos.est", create: {"atributos": {"est": 5}}
-                  }
-                },
-                "items": [
-                  {
-                    "name": "Item Name",
-                    "type": "itemType",
-                    "system": { ...item field values... }
-                  }
-                ]
-              },
-              "reasoning": "Brief explanation of design choices"
+              "name": "Character Name",
+              "concepto": "Brief concept (2-3 sentences)",
+              "biografia": "Background story (3-4 sentences)",
+              "descripcion": "Physical/personality description (2-3 sentences)"
             }
             
-            IMPORTANT:
-            - Language: Generate all text in {language}
-            - Be creative but mechanically sound
-            - Balance attribute values appropriately (don't max everything out)
-            - Provide detailed descriptions for text fields
-            - Create 2-4 relevant items for the character
+            Language: {language}
+            Be creative and evocative. This concept will be used to fill other fields.
+            """;
+
+    private static final String FILL_FIELDS_SYSTEM_PROMPT = """
+            You are an expert at filling character sheet fields for tabletop RPG systems.
+            
+            You will receive:
+            1. A character concept (name, biografia, etc.)
+            2. A list of fields to fill
+            3. System rules and guidance
+            
+            Your job is to fill ONLY the provided fields with appropriate values that match the character concept.
+            
+            CRITICAL RULES:
+            - Fill EVERY field in the list
+            - Respect field types: "string" for text, "number" for integers, "resource" for numbers
+            - Respect min/max constraints: never exceed max or go below min
+            - For numeric fields: distribute values wisely, don't max everything
+            - Use the character concept to inform your choices
+            
+            RESPONSE FORMAT:
+            Respond ONLY with valid JSON - a flat object with field paths as keys:
+            {
+              "system.atributos.est": 5,
+              "system.atributos.tam": 7,
+              "system.caracteristicas.blindaje": 2
+            }
+            
+            Language: {language}
+            """;
+
+    private static final String GENERATE_ITEMS_SYSTEM_PROMPT = """
+            You are an expert at creating items for tabletop RPG characters.
+            
+            Based on the character concept and available item types, create 2-4 relevant items.
+            
+            Respond ONLY with valid JSON array:
+            [
+              {
+                "name": "Item Name",
+                "type": "itemType",
+                "system": { ...item properties... }
+              }
+            ]
+            
+            Language: {language}
             """;
 
     private static final String CHARACTER_EXPLANATION_SYSTEM_PROMPT = """
@@ -126,63 +132,32 @@ public class CharacterGenerationService {
 
         String language = request.getLanguage() != null ? request.getLanguage() : "en";
 
-        // Send WebSocket notification: generation started
-        if (sessionId != null) {
-            CharacterCreationEvent startEvent = CharacterCreationEvent.builder()
-                    .requestId(sessionId)
-                    .currentStep("Generating character...")
-                    .progress(10)
-                    .build();
-            
-            WebSocketMessage startMessage = WebSocketMessage.success(
-                    WebSocketMessage.MessageType.CHARACTER_GENERATION_STARTED,
-                    sessionId,
-                    startEvent
-            );
-            webSocketController.sendCharacterUpdate(sessionId, startMessage);
-        }
-
-        // Build the user prompt with blueprint context
-        String userPrompt = buildGenerationPrompt(request);
-
         try {
-            // Call AI with structured output
-            String responseJson = chatClient.prompt()
-                    .system(sp -> sp.text(CHARACTER_GENERATION_SYSTEM_PROMPT.replace("{language}", language)))
-                    .user(userPrompt)
-                    .call()
-                    .content();
+            // Step 1: Generate core concept (20% progress)
+            sendProgress(sessionId, "Generating character concept...", 20);
+            Map<String, Object> coreConcept = generateCoreConcept(request, language);
+            log.info("Generated core concept: {}", coreConcept.get("name"));
 
-            // Parse response
-            log.debug("AI Response: {}", responseJson);
+            // Step 2: Group and fill fields (40-80% progress)
+            sendProgress(sessionId, "Filling character attributes...", 40);
+            Map<String, Object> systemData = fillFieldsInGroups(coreConcept, request, language, sessionId);
+            log.info("Filled {} field groups", systemData.size());
 
-            // Clean response (remove markdown code blocks if present)
-            responseJson = cleanJsonResponse(responseJson);
+            // Step 3: Generate items (90% progress)
+            sendProgress(sessionId, "Generating items...", 90);
+            List<CreateCharacterResponse.ItemDto> items = generateItems(coreConcept, request, language);
+            log.info("Generated {} items", items.size());
 
-            // Parse the JSON response
-            @SuppressWarnings("unchecked")
-            Map<String, Object> aiResponse = objectMapper.readValue(responseJson, Map.class);
+            // Assemble final response
+            CreateCharacterResponse response = assembleCharacter(
+                coreConcept,
+                systemData,
+                items,
+                request.getActorType()
+            );
 
-            CreateCharacterResponse response = new CreateCharacterResponse();
-            response.setSuccess(true);
-
-            // Extract character data
-            Map<String, Object> characterData = (Map<String, Object>) aiResponse.get("character");
-            if (characterData != null) {
-                CreateCharacterResponse.CharacterDataDto characterDto =
-                    objectMapper.convertValue(characterData, CreateCharacterResponse.CharacterDataDto.class);
-                response.setCharacter(characterDto);
-            }
-
-            // Extract reasoning
-            if (aiResponse.containsKey("reasoning")) {
-                response.setReasoning((String) aiResponse.get("reasoning"));
-            }
-
-            log.info("Successfully generated character: {}",
-                response.getCharacter().getActor().getName());
-
-            // Send WebSocket notification: generation completed
+            // Send completion notification
+            sendProgress(sessionId, "Character generated successfully!", 100);
             if (sessionId != null) {
                 CharacterCreationEvent completedEvent = CharacterCreationEvent.builder()
                         .requestId(sessionId)
@@ -201,12 +176,12 @@ public class CharacterGenerationService {
                 webSocketController.sendCharacterUpdate(sessionId, completedMessage);
             }
 
+            log.info("Successfully generated character: {}", response.getCharacter().getActor().getName());
             return response;
 
         } catch (Exception e) {
             log.error("Character generation failed", e);
             
-            // Send WebSocket notification: generation failed
             if (sessionId != null) {
                 WebSocketMessage errorMessage = WebSocketMessage.error(
                         WebSocketMessage.MessageType.CHARACTER_GENERATION_FAILED,
@@ -220,6 +195,342 @@ public class CharacterGenerationService {
             errorResponse.setSuccess(false);
             errorResponse.setReasoning("Failed to generate character: " + e.getMessage());
             return errorResponse;
+        }
+    }
+
+    /**
+     * Step 1: Generate core character concept
+     */
+    private Map<String, Object> generateCoreConcept(CreateCharacterRequest request, String language) throws Exception {
+        String actorGuidance = getActorTypeGuidance(request.getActorType(), request.getBlueprint().getSystemId());
+
+        String userPrompt = String.format(
+            "System: %s\nActor Type: %s\n\n%s\n\nUser Request: %s\n\nCreate a character concept.",
+            request.getBlueprint().getSystemId(),
+            request.getActorType(),
+            actorGuidance,
+            request.getPrompt()
+        );
+
+        String responseJson = chatClient.prompt()
+                .system(sp -> sp.text(CORE_CONCEPT_SYSTEM_PROMPT.replace("{language}", language)))
+                .user(userPrompt)
+                .call()
+                .content();
+
+        responseJson = cleanJsonResponse(responseJson);
+        return objectMapper.readValue(responseJson, Map.class);
+    }
+
+    /**
+     * Step 2: Fill fields in semantic groups
+     */
+    private Map<String, Object> fillFieldsInGroups(
+            Map<String, Object> coreConcept,
+            CreateCharacterRequest request,
+            String language,
+            String sessionId) throws Exception {
+
+        Map<String, Object> allSystemData = new java.util.HashMap<>();
+
+        // Get actor guidance once for all field groups
+        String actorGuidance = getActorTypeGuidance(request.getActorType(), request.getBlueprint().getSystemId());
+
+        // Group fields by semantic category
+        Map<String, List<CharacterBlueprintDto.FieldDto>> fieldGroups = groupFields(request.getBlueprint());
+
+        int groupIndex = 0;
+        int totalGroups = fieldGroups.size();
+
+        for (Map.Entry<String, List<CharacterBlueprintDto.FieldDto>> entry : fieldGroups.entrySet()) {
+            String groupName = entry.getKey();
+            List<CharacterBlueprintDto.FieldDto> fields = entry.getValue();
+
+            // Update progress (40% to 80% spread across groups)
+            int progress = 40 + (40 * groupIndex / totalGroups);
+            sendProgress(sessionId, "Filling " + groupName + "...", progress);
+
+            log.info("Filling field group '{}' with {} fields", groupName, fields.size());
+
+            Map<String, Object> groupValues = fillFieldGroup(coreConcept, fields, actorGuidance, language, request);
+            allSystemData.putAll(groupValues);
+
+            groupIndex++;
+        }
+
+        return allSystemData;
+    }
+
+    /**
+     * Fill a single group of fields
+     */
+    private Map<String, Object> fillFieldGroup(
+            Map<String, Object> coreConcept,
+            List<CharacterBlueprintDto.FieldDto> fields,
+            String actorGuidance,
+            String language,
+            CreateCharacterRequest request) throws Exception {
+
+        StringBuilder userPrompt = new StringBuilder();
+        userPrompt.append("Character Concept:\n");
+        userPrompt.append(objectMapper.writeValueAsString(coreConcept)).append("\n\n");
+
+        userPrompt.append("System Rules:\n");
+        userPrompt.append(actorGuidance).append("\n\n");
+
+        userPrompt.append("Fields to fill:\n");
+        userPrompt.append(objectMapper.writeValueAsString(fields)).append("\n\n");
+
+        userPrompt.append("Fill ALL these fields with appropriate values based on the character concept.");
+
+        String responseJson = chatClient.prompt()
+                .system(sp -> sp.text(FILL_FIELDS_SYSTEM_PROMPT.replace("{language}", language)))
+                .user(userPrompt.toString())
+                .call()
+                .content();
+
+        responseJson = cleanJsonResponse(responseJson);
+        log.debug("Field group response: {}", responseJson);
+
+        return objectMapper.readValue(responseJson, Map.class);
+    }
+
+    /**
+     * Step 3: Generate items based on character concept
+     */
+    private List<CreateCharacterResponse.ItemDto> generateItems(
+            Map<String, Object> coreConcept,
+            CreateCharacterRequest request,
+            String language) throws Exception {
+
+        if (request.getBlueprint().getAvailableItems() == null ||
+            request.getBlueprint().getAvailableItems().isEmpty()) {
+            log.info("No available items in blueprint, skipping item generation");
+            return List.of();
+        }
+
+        // Get RAG context for items
+        List<String> itemTypes = request.getBlueprint().getAvailableItems().stream()
+                .map(item -> {
+                    if (item instanceof Map) {
+                        return (String) ((Map<?, ?>) item).get("type");
+                    }
+                    return null;
+                })
+                .filter(type -> type != null)
+                .collect(Collectors.toList());
+
+        String itemContext = "";
+        if (!itemTypes.isEmpty()) {
+            try {
+                itemContext = ragService.searchItemContext(
+                    itemTypes,
+                    request.getBlueprint().getSystemId(),
+                    2
+                );
+            } catch (Exception e) {
+                log.warn("Failed to retrieve item context", e);
+            }
+        }
+
+        StringBuilder userPrompt = new StringBuilder();
+        userPrompt.append("Character Concept:\n");
+        userPrompt.append(objectMapper.writeValueAsString(coreConcept)).append("\n\n");
+
+        userPrompt.append("Available Item Types:\n");
+        userPrompt.append(objectMapper.writeValueAsString(request.getBlueprint().getAvailableItems())).append("\n\n");
+
+        if (!itemContext.isEmpty()) {
+            userPrompt.append("Item Rules:\n");
+            userPrompt.append(itemContext).append("\n\n");
+        }
+
+        userPrompt.append("Create 2-4 appropriate items for this character.");
+
+        String responseJson = chatClient.prompt()
+                .system(sp -> sp.text(GENERATE_ITEMS_SYSTEM_PROMPT.replace("{language}", language)))
+                .user(userPrompt.toString())
+                .call()
+                .content();
+
+        responseJson = cleanJsonResponse(responseJson);
+        log.debug("Items response: {}", responseJson);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> itemMaps = objectMapper.readValue(responseJson, List.class);
+
+        return itemMaps.stream()
+                .map(itemMap -> objectMapper.convertValue(itemMap, CreateCharacterResponse.ItemDto.class))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Assemble final character response from all parts
+     */
+    private CreateCharacterResponse assembleCharacter(
+            Map<String, Object> coreConcept,
+            Map<String, Object> systemData,
+            List<CreateCharacterResponse.ItemDto> items,
+            String actorType) {
+
+        CreateCharacterResponse response = new CreateCharacterResponse();
+        response.setSuccess(true);
+
+        // Build actor
+        CreateCharacterResponse.ActorDto actor = new CreateCharacterResponse.ActorDto();
+        actor.setName((String) coreConcept.get("name"));
+        actor.setType(actorType);
+        actor.setImg("icons/svg/mystery-man.svg");
+
+        // Build nested system data structure from flat field paths
+        Map<String, Object> nestedSystem = buildNestedStructure(systemData, coreConcept);
+        actor.setSystem(nestedSystem);
+
+        // Build character data
+        CreateCharacterResponse.CharacterDataDto characterData = new CreateCharacterResponse.CharacterDataDto();
+        characterData.setActor(actor);
+        characterData.setItems(items);
+
+        response.setCharacter(characterData);
+        response.setReasoning("Character generated using multi-step approach with focused field filling");
+
+        return response;
+    }
+
+    /**
+     * Build nested structure from flat field paths
+     */
+    private Map<String, Object> buildNestedStructure(Map<String, Object> flatData, Map<String, Object> coreConcept) {
+        Map<String, Object> nested = new java.util.HashMap<>();
+
+        // Add core concept fields (concepto, biografia, descripcion)
+        if (coreConcept.containsKey("concepto")) {
+            nested.put("concepto", coreConcept.get("concepto"));
+        }
+        if (coreConcept.containsKey("biografia")) {
+            nested.put("biografia", coreConcept.get("biografia"));
+        }
+        if (coreConcept.containsKey("descripcion")) {
+            nested.put("descripcion", coreConcept.get("descripcion"));
+        }
+
+        // Convert flat paths to nested structure
+        for (Map.Entry<String, Object> entry : flatData.entrySet()) {
+            String path = entry.getKey();
+            Object value = entry.getValue();
+
+            // Remove "system." prefix if present
+            if (path.startsWith("system.")) {
+                path = path.substring(7);
+            }
+
+            setNestedValue(nested, path, value);
+        }
+
+        return nested;
+    }
+
+    /**
+     * Set a value in a nested map using dot notation
+     */
+    private void setNestedValue(Map<String, Object> map, String path, Object value) {
+        String[] parts = path.split("\\.");
+        Map<String, Object> current = map;
+
+        for (int i = 0; i < parts.length - 1; i++) {
+            String part = parts[i];
+            if (!current.containsKey(part)) {
+                current.put(part, new java.util.HashMap<String, Object>());
+            }
+            Object next = current.get(part);
+            if (!(next instanceof Map)) {
+                // Overwrite if not a map
+                next = new java.util.HashMap<String, Object>();
+                current.put(part, next);
+            }
+            current = (Map<String, Object>) next;
+        }
+
+        current.put(parts[parts.length - 1], value);
+    }
+
+    /**
+     * Group fields by semantic category
+     */
+    private Map<String, List<CharacterBlueprintDto.FieldDto>> groupFields(CharacterBlueprintDto blueprint) {
+        Map<String, List<CharacterBlueprintDto.FieldDto>> groups = new java.util.LinkedHashMap<>();
+
+        List<CharacterBlueprintDto.FieldDto> coreFields = new java.util.ArrayList<>();
+        List<CharacterBlueprintDto.FieldDto> attributeFields = new java.util.ArrayList<>();
+        List<CharacterBlueprintDto.FieldDto> skillFields = new java.util.ArrayList<>();
+        List<CharacterBlueprintDto.FieldDto> resourceFields = new java.util.ArrayList<>();
+        List<CharacterBlueprintDto.FieldDto> statFields = new java.util.ArrayList<>();
+        List<CharacterBlueprintDto.FieldDto> otherFields = new java.util.ArrayList<>();
+
+        for (Object fieldObj : blueprint.getActorFields()) {
+            CharacterBlueprintDto.FieldDto field = objectMapper.convertValue(fieldObj, CharacterBlueprintDto.FieldDto.class);
+            String path = field.getPath().toLowerCase();
+
+            if (path.contains("concepto") || path.contains("biografia") || path.contains("descripcion") ||
+                path.contains("cita") || path.contains("extras")) {
+                coreFields.add(field);
+            } else if (path.contains("atributo")) {
+                attributeFields.add(field);
+            } else if (path.contains("habilidad") || path.contains("skill")) {
+                skillFields.add(field);
+            } else if (path.contains("drama") || path.contains("resistencia") || path.contains("estabilidad") ||
+                       path.contains("aguante") || path.contains("resource")) {
+                resourceFields.add(field);
+            } else if (path.contains("defensa") || path.contains("danio") || path.contains("blindaje") ||
+                       path.contains("armamento") || path.contains("caracteristica")) {
+                statFields.add(field);
+            } else {
+                otherFields.add(field);
+            }
+        }
+
+        if (!coreFields.isEmpty()) groups.put("core fields", coreFields);
+        if (!attributeFields.isEmpty()) groups.put("attributes", attributeFields);
+        if (!skillFields.isEmpty()) groups.put("skills", skillFields);
+        if (!resourceFields.isEmpty()) groups.put("resources", resourceFields);
+        if (!statFields.isEmpty()) groups.put("combat stats", statFields);
+        if (!otherFields.isEmpty()) groups.put("other fields", otherFields);
+
+        return groups;
+    }
+
+    /**
+     * Get actor type guidance from RAG
+     */
+    private String getActorTypeGuidance(String actorType, String systemId) {
+        try {
+            return gameMasterManualSolver.solveDoubt(
+                String.format("How do I create a %s in this game system? What are the rules and important considerations?", actorType),
+                systemId
+            );
+        } catch (Exception e) {
+            log.warn("Failed to retrieve actor type guidance", e);
+            return "";
+        }
+    }
+
+    /**
+     * Send progress update via WebSocket
+     */
+    private void sendProgress(String sessionId, String step, int progress) {
+        if (sessionId != null) {
+            CharacterCreationEvent event = CharacterCreationEvent.builder()
+                    .requestId(sessionId)
+                    .currentStep(step)
+                    .progress(progress)
+                    .build();
+
+            WebSocketMessage message = WebSocketMessage.success(
+                    WebSocketMessage.MessageType.CHARACTER_GENERATION_STARTED,
+                    sessionId,
+                    event
+            );
+            webSocketController.sendCharacterUpdate(sessionId, message);
         }
     }
 
@@ -257,95 +568,6 @@ public class CharacterGenerationService {
         }
     }
 
-    /**
-     * Build the generation prompt with blueprint context and RAG-enhanced item information
-     */
-    private String buildGenerationPrompt(CreateCharacterRequest request) {
-        StringBuilder prompt = new StringBuilder();
-
-        prompt.append("SYSTEM: ").append(request.getBlueprint().getSystemId()).append("\n");
-        prompt.append("ACTOR TYPE: ").append(request.getActorType()).append("\n\n");
-
-        prompt.append("USER REQUEST:\n");
-        prompt.append(request.getPrompt()).append("\n\n");
-
-        // Add GameMaster guidance for creating this actor type
-        try {
-            String actorTypeGuidance = gameMasterManualSolver.solveDoubt(
-                String.format("How do I create a %s in this game system? What are the rules and important considerations?",
-                    request.getActorType()),
-                request.getBlueprint().getSystemId()
-            );
-            if (actorTypeGuidance != null && !actorTypeGuidance.isBlank()) {
-                prompt.append("=== ACTOR CREATION GUIDANCE ===\n");
-                prompt.append(actorTypeGuidance).append("\n\n");
-            }
-        } catch (Exception e) {
-            log.warn("Failed to retrieve actor type guidance from GameMaster manual", e);
-        }
-
-        // Add RAG context for character creation
-        try {
-            String characterContext = ragService.searchCharacterCreationContext(
-                request.getPrompt(),
-                request.getBlueprint().getSystemId(),
-                3
-            );
-            if (!characterContext.isEmpty()) {
-                prompt.append(characterContext).append("\n");
-            }
-        } catch (Exception e) {
-            log.warn("Failed to retrieve character creation context from RAG", e);
-        }
-
-        // Add RAG context for available item types
-        if (request.getBlueprint().getAvailableItems() != null &&
-            !request.getBlueprint().getAvailableItems().isEmpty()) {
-
-            List<String> itemTypes = request.getBlueprint().getAvailableItems().stream()
-                .map(item -> {
-                    if (item instanceof Map) {
-                        return (String) ((Map<?, ?>) item).get("type");
-                    }
-                    return null;
-                })
-                .filter(type -> type != null)
-                .collect(Collectors.toList());
-
-            if (!itemTypes.isEmpty()) {
-                try {
-                    String itemContext = ragService.searchItemContext(
-                        itemTypes,
-                        request.getBlueprint().getSystemId(),
-                        2 // Top 2 chunks per item type
-                    );
-                    if (!itemContext.isEmpty()) {
-                        prompt.append(itemContext).append("\n");
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to retrieve item context from RAG", e);
-                }
-            }
-        }
-
-        prompt.append("BLUEPRINT:\n");
-        try {
-            String blueprintJson = objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValueAsString(request.getBlueprint());
-            prompt.append(blueprintJson).append("\n\n");
-        } catch (Exception e) {
-            log.warn("Failed to serialize blueprint", e);
-            prompt.append("[Blueprint serialization failed]\n\n");
-        }
-
-        prompt.append("IMPORTANT: You MUST fill ALL fields listed in the 'actorFields' array. ");
-        prompt.append("For each field, use the 'path' property to determine where to place the value in the nested structure. ");
-        prompt.append("For example, if path is 'system.atributos.est', create {\"system\": {\"atributos\": {\"est\": value}}}. ");
-        prompt.append("Generate a complete character following the blueprint structure and constraints. ");
-        prompt.append("Use the provided system rules and item information to create mechanically accurate items.");
-
-        return prompt.toString();
-    }
 
     /**
      * Clean JSON response from AI (remove markdown code blocks)
