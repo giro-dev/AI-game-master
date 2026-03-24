@@ -10,12 +10,13 @@ import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Service for Retrieval-Augmented Generation (RAG)
- * Searches for relevant context from the knowledge base to enhance AI responses
- * Uses Spring AI VectorStore for similarity search
+ * Service for Retrieval-Augmented Generation (RAG).
+ * Searches the OpenSearch vector store with rich metadata filtering
+ * (foundry_system, world_id, chunk_type, document_type, entity_type).
  */
 @Slf4j
 @Service
@@ -24,142 +25,157 @@ public class RAGService {
 
     private final VectorStore vectorStore;
 
+    // ─── Item context (for character / item generation) ─────────────────
+
     /**
-     * Search for relevant context about item types for character generation
-     * 
-     * @param itemTypes List of item types to search for
-     * @param systemId The game system ID (e.g., "hitos", "dnd5e")
-     * @param topK Number of most relevant chunks to retrieve per item type
-     * @return Formatted context string with relevant information
+     * Search for relevant context about item types.
      */
     public String searchItemContext(List<String> itemTypes, String systemId, int topK) {
-        if (itemTypes == null || itemTypes.isEmpty()) {
-            log.debug("No item types provided, skipping RAG search");
-            return "";
-        }
+        return searchItemContext(itemTypes, systemId, null, topK);
+    }
 
-        log.info("Searching RAG context for {} item types in system: {}", itemTypes.size(), systemId);
+    public String searchItemContext(List<String> itemTypes, String systemId, String worldId, int topK) {
+        if (itemTypes == null || itemTypes.isEmpty()) return "";
+        log.info("Searching item context for {} types in system={}, world={}", itemTypes.size(), systemId, worldId);
 
-        StringBuilder contextBuilder = new StringBuilder();
-        contextBuilder.append("=== RELEVANT SYSTEM INFORMATION FROM RULES ===\n\n");
-
+        StringBuilder ctx = new StringBuilder("=== RELEVANT SYSTEM INFORMATION FROM RULES ===\n\n");
         for (String itemType : itemTypes) {
             try {
-                String context = searchItemTypeContext(itemType, systemId, topK);
-                if (!context.isEmpty()) {
-                    contextBuilder.append("--- ").append(itemType).append(" ---\n");
-                    contextBuilder.append(context).append("\n\n");
+                String chunk = searchSingle(
+                        "Rules and mechanics for %s. How does %s work?".formatted(itemType, itemType),
+                        systemId, worldId, null, null, topK);
+                if (!chunk.isEmpty()) {
+                    ctx.append("--- ").append(itemType).append(" ---\n").append(chunk).append("\n\n");
                 }
             } catch (Exception e) {
                 log.warn("Failed to search context for item type '{}': {}", itemType, e.getMessage());
             }
         }
-
-        String result = contextBuilder.toString();
-        if (result.length() <= 50) { // Only header
-            log.debug("No relevant context found in RAG");
-            return "";
-        }
-
-        log.info("RAG context retrieved: {} characters", result.length());
-        return result;
+        return ctx.length() <= 50 ? "" : ctx.toString();
     }
 
-    /**
-     * Search for context about a specific item type using VectorStore
-     */
-    private String searchItemTypeContext(String itemType, String systemId, int topK) {
-        // Build search query for this item type
-        String searchQuery = String.format(
-            "What is a %s? How does %s work in the game system? Rules and mechanics for %s.",
-            itemType, itemType, itemType
-        );
+    // ─── Character creation context ─────────────────────────────────────
 
-        // Create filter for system-specific search
-        Filter.Expression filterExpression = new FilterExpressionBuilder()
-            .eq("foundry_system", systemId)
-            .build();
-
-        // Build search request with filter
-        SearchRequest searchRequest = SearchRequest.builder()
-            .query(searchQuery)
-            .topK(topK)
-            .filterExpression(filterExpression)
-            .build();
-
-        // Perform similarity search
-        List<Document> documents = vectorStore.similaritySearch(searchRequest);
-
-        if (documents.isEmpty()) {
-            log.debug("No documents found for item type '{}' in system '{}'", itemType, systemId);
-            return "";
-        }
-
-        // Format the documents into readable context
-        return documents.stream()
-            .map(doc -> {
-                StringBuilder sb = new StringBuilder();
-                
-                // Add source information if available
-                Object sourceObj = doc.getMetadata().get("source");
-                if (sourceObj != null) {
-                    sb.append("[Source: ").append(sourceObj.toString()).append("]\n");
-                }
-                
-                sb.append(doc.getText());
-                return sb.toString();
-            })
-            .collect(Collectors.joining("\n\n"));
-    }
-
-    /**
-     * Search for general context about character creation using VectorStore
-     */
     public String searchCharacterCreationContext(String characterConcept, String systemId, int topK) {
-        log.info("Searching character creation context for: '{}' in system: {}", characterConcept, systemId);
+        return searchCharacterCreationContext(characterConcept, systemId, null, topK);
+    }
 
+    public String searchCharacterCreationContext(String characterConcept, String systemId, String worldId, int topK) {
+        log.info("Searching character creation context for '{}' system={} world={}", characterConcept, systemId, worldId);
         try {
-            // Create search query for character creation
-            String searchQuery = "Character creation rules and guidelines: " + characterConcept;
+            // 1) Rules about character creation
+            String rules = searchSingle(
+                    "Character creation rules and guidelines: " + characterConcept,
+                    systemId, worldId, "character_creation", null, topK);
 
-            // Create filter for system-specific search
-            Filter.Expression filterExpression = new FilterExpressionBuilder()
-                .eq("foundry_system", systemId)
-                .build();
+            // 2) Extracted entity examples (character templates, classes, races)
+            String examples = searchSingle(
+                    "Character example template: " + characterConcept,
+                    systemId, worldId, null, "extracted_entity", Math.max(2, topK / 2));
 
-            // Build search request
-            SearchRequest searchRequest = SearchRequest.builder()
-                .query(searchQuery)
-                .topK(topK)
-                .filterExpression(filterExpression)
-                .build();
-
-            // Perform similarity search
-            List<Document> documents = vectorStore.similaritySearch(searchRequest);
-
-            if (documents.isEmpty()) {
-                log.debug("No character creation context found");
-                return "";
+            StringBuilder ctx = new StringBuilder();
+            if (!rules.isEmpty()) {
+                ctx.append("=== CHARACTER CREATION RULES ===\n\n").append(rules).append("\n\n");
             }
-
-            StringBuilder context = new StringBuilder();
-            context.append("=== CHARACTER CREATION GUIDELINES FROM RULES ===\n\n");
-
-            for (Document doc : documents) {
-                Object sourceObj = doc.getMetadata().get("source");
-                if (sourceObj != null) {
-                    context.append("[Source: ").append(sourceObj.toString()).append("]\n");
-                }
-                context.append(doc.getText()).append("\n\n");
+            if (!examples.isEmpty()) {
+                ctx.append("=== CHARACTER EXAMPLES FROM MANUALS ===\n\n").append(examples).append("\n\n");
             }
-
-            log.info("Character creation context retrieved: {} characters", context.length());
-            return context.toString();
-
+            if (ctx.isEmpty()) return "";
+            log.info("Character creation context: {} chars", ctx.length());
+            return ctx.toString();
         } catch (Exception e) {
             log.error("Failed to search character creation context", e);
             return "";
         }
+    }
+
+    // ─── Entity search (extracted structured data) ──────────────────────
+
+    /**
+     * Search for extracted entities of a specific type (weapon, spell, npc, etc.)
+     */
+    public String searchExtractedEntities(String query, String systemId, String worldId, String entityType, int topK) {
+        log.info("Searching extracted entities: type={}, system={}, world={}", entityType, systemId, worldId);
+        try {
+            FilterExpressionBuilder b = new FilterExpressionBuilder();
+            FilterExpressionBuilder.Op filter = b.eq("document_type", "extracted_entity");
+            if (systemId != null) filter = b.and(filter, b.eq("foundry_system", systemId));
+            if (worldId != null) filter = b.and(filter, b.eq("world_id", worldId));
+            if (entityType != null) filter = b.and(filter, b.eq("entity_type", entityType));
+
+            List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
+                    .query(query)
+                    .topK(topK)
+                    .filterExpression(filter.build())
+                    .build());
+
+            return formatDocuments(docs);
+        } catch (Exception e) {
+            log.warn("Entity search failed: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    // ─── Bestiary / NPC search ──────────────────────────────────────────
+
+    /**
+     * Search bestiary and NPC stat blocks for NPC generation.
+     */
+    public String searchBestiaryContext(String query, String systemId, String worldId, int topK) {
+        log.info("Searching bestiary context: system={}, world={}", systemId, worldId);
+        try {
+            // Raw bestiary/stat-block chunks
+            String statBlocks = searchSingle(query, systemId, worldId, "npc_stat_block", null, topK);
+            String bestiary = searchSingle(query, systemId, worldId, "bestiary", null, topK);
+            // Extracted NPC entities
+            String entities = searchExtractedEntities(query, systemId, worldId, "npc", Math.max(2, topK / 2));
+
+            StringBuilder ctx = new StringBuilder();
+            if (!statBlocks.isEmpty()) ctx.append("=== NPC STAT BLOCKS ===\n\n").append(statBlocks).append("\n\n");
+            if (!bestiary.isEmpty()) ctx.append("=== BESTIARY LORE ===\n\n").append(bestiary).append("\n\n");
+            if (!entities.isEmpty()) ctx.append("=== EXTRACTED NPC EXAMPLES ===\n\n").append(entities).append("\n\n");
+            return ctx.toString();
+        } catch (Exception e) {
+            log.warn("Bestiary search failed: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    // ─── Generic search (used by all specialised methods) ───────────────
+
+    private String searchSingle(String query, String systemId, String worldId,
+                                String chunkType, String documentType, int topK) {
+        FilterExpressionBuilder b = new FilterExpressionBuilder();
+        FilterExpressionBuilder.Op filter = b.eq("foundry_system", systemId);
+        if (worldId != null) filter = b.and(filter, b.eq("world_id", worldId));
+        if (chunkType != null) filter = b.and(filter, b.eq("chunk_type", chunkType));
+        if (documentType != null) filter = b.and(filter, b.eq("document_type", documentType));
+
+        List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
+                .query(query)
+                .topK(topK)
+                .filterExpression(filter.build())
+                .build());
+
+        return formatDocuments(docs);
+    }
+
+    private String formatDocuments(List<Document> documents) {
+        if (documents == null || documents.isEmpty()) return "";
+        return documents.stream()
+                .map(doc -> {
+                    StringBuilder sb = new StringBuilder();
+                    Map<String, Object> meta = doc.getMetadata();
+                    Object source = meta.get("book_title");
+                    if (source == null) source = meta.get("file_name");
+                    Object section = meta.get("section_title");
+                    if (source != null) sb.append("[Source: ").append(source);
+                    if (section != null) sb.append(" — ").append(section);
+                    if (source != null) sb.append("]\n");
+                    sb.append(doc.getText());
+                    return sb.toString();
+                })
+                .collect(Collectors.joining("\n\n"));
     }
 }
 

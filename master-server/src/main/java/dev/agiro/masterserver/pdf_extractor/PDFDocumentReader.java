@@ -6,7 +6,8 @@ import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.reader.pdf.ParagraphPdfDocumentReader;
 import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
-import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -17,18 +18,31 @@ import java.util.Optional;
 @Component
 public class PDFDocumentReader {
 
-    List<Document> getDocsFromPdfWithCatalog(MultipartFile file, String foundrySystem){
+    /**
+     * Overload accepting byte[] — safe for @Async usage.
+     */
+    List<Document> getDocsFromPdfWithCatalog(byte[] pdfBytes, String foundrySystem) {
+        Resource resource = new ByteArrayResource(pdfBytes);
 
-
-        DocumentReader pdfReader = tryParagraphReader(file, foundrySystem)
-                .orElse(getPageReader(file, foundrySystem));
+        DocumentReader pdfReader = tryParagraphReader(resource, foundrySystem)
+                .orElseGet(() -> getPageReader(resource, foundrySystem));
 
         return pdfReader.read();
     }
 
-    private  DocumentReader getPageReader(MultipartFile file, String foundrySystem) {
-        InputStreamResource pdfResource = createResource(file);
-        return new PagePdfDocumentReader(pdfResource,
+    /**
+     * Original overload for synchronous callers that still use MultipartFile.
+     */
+    List<Document> getDocsFromPdfWithCatalog(MultipartFile file, String foundrySystem) {
+        try {
+            return getDocsFromPdfWithCatalog(file.getBytes(), foundrySystem);
+        } catch (IOException e) {
+            throw new PDFNotProcessable("Could not read PDF file", e);
+        }
+    }
+
+    private DocumentReader getPageReader(Resource resource, String foundrySystem) {
+        return new PagePdfDocumentReader(resource,
                 PdfDocumentReaderConfig.builder()
                         .withPageTopMargin(0)
                         .withPageExtractedTextFormatter(ExtractedTextFormatter.builder()
@@ -37,13 +51,11 @@ public class PDFDocumentReader {
                         .withPagesPerDocument(1)
                         .build()
         );
-
     }
 
-    private static Optional<DocumentReader> tryParagraphReader(MultipartFile file, String foundrySystem) {
-        InputStreamResource pdfResource = createResource(file);
+    private static Optional<DocumentReader> tryParagraphReader(Resource resource, String foundrySystem) {
         try {
-            ParagraphPdfDocumentReader pdfReader = new ParagraphPdfDocumentReader(pdfResource,
+            ParagraphPdfDocumentReader pdfReader = new ParagraphPdfDocumentReader(resource,
                     PdfDocumentReaderConfig.builder()
                             .withPageTopMargin(0)
                             .withPageExtractedTextFormatter(ExtractedTextFormatter.builder()
@@ -54,16 +66,7 @@ public class PDFDocumentReader {
             );
             return Optional.of(pdfReader);
         } catch (Exception e) {
-            // Log the exception if needed
             return Optional.empty();
-        }
-    }
-
-    private static InputStreamResource createResource(MultipartFile file){
-        try {
-            return new InputStreamResource(file.getInputStream());
-        } catch (IOException e) {
-            throw new PDFNotProcessable("Could not read PDF file", e);
         }
     }
 }

@@ -1,8 +1,8 @@
 {
   "id": "ai-gm",
-  "title": "AI Game Master Connector",
-  "description": "An AI-powered Game Master assistant that understands player intent and executes abilities automatically. Includes system-agnostic character generation.",
-  "version": "0.1.0",
+  "title": "AI Game Master",
+  "description": "An AI-powered Game Master assistant with system-agnostic character/item generation, book ingestion, and session help.",
+  "version": "0.2.0",
   "compatibility": {
     "minimum": "11",
     "verified": "12"
@@ -17,18 +17,14 @@
     "https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"
   ],
   "esmodules": [
-    "schema/schema-extractor.js",
-    "blueprints/blueprint-generator.js",
-    "ui/character-generator.js",
-    "ui/item-generator.js",
-    "websocket-client.js",
-    "api.js",
-    "main.js"
+    "dist/main.js"
   ],
-  "styles": [],
+  "styles": [
+    "styles/ai-game-master-panel.css"
+  ],
   "languages": [],
   "socket": false,
   "templates": [
-    "templates/item-generator.html"
+    "templates/ai-game-master-panel.hbs"
   ]
 }

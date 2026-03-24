@@ -35,7 +35,7 @@ public class GameMasterManualSolver {
                 .searchRequest(SearchRequest.builder()
                         .similarityThreshold(0.4d)
                         .topK(6)
-                        .filterExpression("game_system == '%s'".formatted(gameSystem))
+                        .filterExpression("foundry_system == '%s'".formatted(gameSystem))
                         .build())
 
                 .build();
@@ -44,7 +44,7 @@ public class GameMasterManualSolver {
         ChatResponse response = chatClient.prompt()
                 .advisors(answerAdvisor)
                 .system(systemPromptTemplate.render())
-                .user(query)
+                .user(u -> u.text("{query}").param("query", query))
                 .call()
                 .chatResponse();
         assert response != null;

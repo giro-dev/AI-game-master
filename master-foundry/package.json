@@ -1,0 +1,18 @@
+{
+  "name": "master-foundry",
+  "version": "1.0.0",
+  "description": "AI Game Master for Foundry VTT with TypeScript",
+  "main": "main.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist/"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/jquery": "^3.5.29",
+    "@league-of-foundry-developers/foundry-vtt-types": "^12.331.5"
+  },
+  "type": "module"
+}
+

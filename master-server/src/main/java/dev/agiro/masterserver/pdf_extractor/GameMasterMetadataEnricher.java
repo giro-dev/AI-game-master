@@ -8,6 +8,7 @@ import java.util.List;
 public class GameMasterMetadataEnricher implements DocumentTransformer {
     private static final String FILE_NAME_METADATA_KEY = "file_name";
     private static final String GAME_SYSTEM_METADATA_KEY = "game_system";
+    private static final String FOUNDRY_SYSTEM_METADATA_KEY = "foundry_system";
     private final String fileName;
     private final String gameSystem;
 
@@ -21,6 +22,7 @@ public class GameMasterMetadataEnricher implements DocumentTransformer {
         documents.forEach(document -> {
             document.getMetadata().put(FILE_NAME_METADATA_KEY, fileName);
             document.getMetadata().put(GAME_SYSTEM_METADATA_KEY, gameSystem);
+            document.getMetadata().put(FOUNDRY_SYSTEM_METADATA_KEY, gameSystem);
         });
         return documents;
     }

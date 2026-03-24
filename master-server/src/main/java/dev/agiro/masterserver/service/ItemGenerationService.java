@@ -1,18 +1,16 @@
 package dev.agiro.masterserver.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.agiro.masterserver.controller.WebSocketController;
-import dev.agiro.masterserver.dto.ItemGenerationEvent;
 import dev.agiro.masterserver.dto.ItemGenerationRequest;
 import dev.agiro.masterserver.dto.ItemGenerationResponse;
-import dev.agiro.masterserver.dto.WebSocketMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,35 +20,14 @@ public class ItemGenerationService {
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
-    //private final WebSocketController webSocketController;
+    private final RAGService ragService;
 
-    private static final String ITEM_GENERATION_SYSTEM_PROMPT = """
-            You are an expert item crafter for tabletop RPG systems.
-            You will receive:
-            1. A free-text prompt describing desired items
-            2. (Optional) system id, actor type, and a blueprint of allowed fields
-            3. A target compendium pack id where items will be stored
-
-            Your job is to create 1-3 coherent items that fit the prompt and system.
-
-            Respond ONLY with valid JSON matching this structure:
-            {
-              "items": [
-                {
-                  "name": "Item Name",
-                  "type": "weapon | armor | equipment | consumable | spell | feature | other",
-                  "img": "path/to/icon.png",
-                  "system": { ...fields per system/blueprint... }
-                }
-              ],
-              "reasoning": "Brief explanation"
-            }
-            """;
+    @Value("classpath:/prompts/item_generation_system.txt")
+    private Resource itemGenerationPrompt;
 
     public ItemGenerationService(ChatClient.Builder chatClientBuilder,
-                                 ObjectMapper objectMapper
-                                 //WebSocketController webSocketController
-    ) {
+                                 ObjectMapper objectMapper,
+                                 RAGService ragService) {
 
         this.chatClient = chatClientBuilder
                 .defaultOptions(ChatOptions.builder()
@@ -59,7 +36,7 @@ public class ItemGenerationService {
                         .build())
                 .build();
         this.objectMapper = objectMapper;
-        //this.webSocketController = webSocketController;
+        this.ragService = ragService;
     }
 
     public ItemGenerationResponse generateItems(ItemGenerationRequest request) {
@@ -73,21 +50,12 @@ public class ItemGenerationService {
             return response;
         }
 
-        String sessionId = request.getSessionId();
-        sendWsEvent(sessionId, WebSocketMessage.MessageType.ITEM_GENERATION_STARTED,
-                ItemGenerationEvent.builder()
-                        .requestId(request.getRequestId())
-                        .packId(request.getPackId())
-                        .status("STARTED")
-                        .progress(5)
-                        .message("Generating items...")
-                        .build());
-
         try {
             String userPrompt = buildPrompt(request);
             String aiJson = chatClient.prompt()
-                    .system(sp -> sp.text(ITEM_GENERATION_SYSTEM_PROMPT))
-                    .user(userPrompt)
+                    .system(sp -> sp.text(itemGenerationPrompt)
+                            .param("language", "en"))
+                    .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt))
                     .call()
                     .content();
 
@@ -102,37 +70,13 @@ public class ItemGenerationService {
             response.setItems(items);
             response.setReasoning((String) aiResponse.getOrDefault("reasoning", ""));
             response.setSuccess(true);
-
-            sendWsEvent(sessionId, WebSocketMessage.MessageType.ITEM_GENERATION_COMPLETED,
-                    ItemGenerationEvent.builder()
-                            .requestId(request.getRequestId())
-                            .packId(request.getPackId())
-                            .status("COMPLETED")
-                            .progress(100)
-                            .items(items)
-                            .message("Items generated")
-                            .build());
             return response;
         } catch (Exception e) {
             log.error("Item generation failed", e);
             response.setSuccess(false);
             response.setReasoning("Failed to generate items: " + e.getMessage());
-            sendWsEvent(sessionId, WebSocketMessage.MessageType.ITEM_GENERATION_FAILED,
-                    ItemGenerationEvent.builder()
-                            .requestId(request.getRequestId())
-                            .packId(request.getPackId())
-                            .status("FAILED")
-                            .progress(100)
-                            .error(e.getMessage())
-                            .build());
             return response;
         }
-    }
-
-    private void sendWsEvent(String sessionId, WebSocketMessage.MessageType type, ItemGenerationEvent event) {
-        if (sessionId == null) return;
-        WebSocketMessage wsMessage = WebSocketMessage.success(type, sessionId, event);
-        //webSocketController.sendItemUpdate(sessionId, wsMessage);
     }
 
     private String buildPrompt(ItemGenerationRequest request) {
@@ -144,6 +88,31 @@ public class ItemGenerationService {
         if (request.getActorType() != null) {
             sb.append("ActorType: ").append(request.getActorType()).append("\n");
         }
+
+        // Tell the AI which item types are valid for this system
+        if (request.getValidItemTypes() != null && !request.getValidItemTypes().isEmpty()) {
+            sb.append("\nIMPORTANT — Valid item types for this system (use ONLY these): ")
+              .append(String.join(", ", request.getValidItemTypes())).append("\n");
+            sb.append("The \"type\" field of each item MUST be one of the above values exactly.\n\n");
+        }
+
+        // Enrich with RAG context for item definitions and examples
+        if (request.getSystemId() != null) {
+            String entityExamples = ragService.searchExtractedEntities(
+                    request.getPrompt(), request.getSystemId(), request.getWorldId(), null, 4);
+            if (!entityExamples.isEmpty()) {
+                sb.append("\n=== ITEM EXAMPLES FROM GAME MANUALS ===\n");
+                sb.append(entityExamples).append("\n\n");
+            }
+
+            String ruleContext = ragService.searchItemContext(
+                    List.of("weapon", "armor", "equipment", "spell"),
+                    request.getSystemId(), request.getWorldId(), 3);
+            if (!ruleContext.isEmpty()) {
+                sb.append(ruleContext).append("\n");
+            }
+        }
+
         if (request.getBlueprint() != null && !request.getBlueprint().isEmpty()) {
             sb.append("Blueprint: ").append(request.getBlueprint());
         }

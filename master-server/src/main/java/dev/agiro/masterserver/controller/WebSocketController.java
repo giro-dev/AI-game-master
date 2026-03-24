@@ -70,7 +70,14 @@ public class WebSocketController {
             request.setSessionId(message.getSessionId());
         }
         ItemGenerationResponse response = itemGenerationService.generateItems(request);
-        if (!response.isSuccess()) {
+        if (response.isSuccess()) {
+            WebSocketMessage success = WebSocketMessage.success(
+                    WebSocketMessage.MessageType.ITEM_GENERATION_COMPLETED,
+                    request.getSessionId(),
+                    response
+            );
+            sendItemUpdate(request.getSessionId(), success);
+        } else {
             WebSocketMessage error = WebSocketMessage.error(
                     WebSocketMessage.MessageType.ITEM_GENERATION_FAILED,
                     request.getSessionId(),
@@ -116,5 +123,13 @@ public class WebSocketController {
     public void sendItemUpdate(String sessionId, WebSocketMessage message) {
         log.info("Sending item update to session {}: {}", sessionId, message.getType());
         messagingTemplate.convertAndSend("/queue/item-" + sessionId, message);
+    }
+
+    /**
+     * Send book ingestion update
+     */
+    public void sendIngestionUpdate(String sessionId, WebSocketMessage message) {
+        log.info("Sending ingestion update to session {}: {}", sessionId, message.getType());
+        messagingTemplate.convertAndSend("/queue/ingestion-" + sessionId, message);
     }
 }

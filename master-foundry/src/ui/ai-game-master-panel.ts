@@ -1,0 +1,748 @@
+/**
+ * AI Game Master Panel
+ * Central hub for all AI-powered game master tools in Foundry VTT.
+ *
+ * Tabs: Characters · Items · Library · Session · System
+ */
+
+import { FieldTreeBuilder } from '../utils/field-tree-builder.js';
+import { CharacterDataSanitizer } from '../utils/character-data-sanitizer.js';
+import { CharacterGenerationService } from '../services/character-generation-service.js';
+import type {
+    FieldDefinition,
+    CharacterData,
+    ValidationError,
+    ChatEntry,
+    BookInfo,
+    VTTAction
+} from '../types/index.js';
+
+const API = 'http://localhost:8080';
+
+export class AIGameMasterPanel extends Application {
+
+    // ── Character tab state ──
+    private selectedActorType: string = 'character';
+    private actorFields: FieldDefinition[] = [];
+    private selectedFields: Set<string> = new Set();
+    private characterData: CharacterData | null = null;
+    private validationErrors: ValidationError[] = [];
+
+    // ── Session tab state ──
+    private chatHistory: ChatEntry[] = [];
+    private selectedTokenIds: Set<string> = new Set();
+    private _controlTokenHookId: number | null = null;
+
+    // ── Library tab state ──
+    private books: BookInfo[] = [];
+
+    // ── Services ──
+    private readonly _charService: CharacterGenerationService;
+
+    constructor(options: any = {}) {
+        super(options);
+        this._charService = new CharacterGenerationService(API);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Foundry Application boilerplate                                    */
+    /* ------------------------------------------------------------------ */
+
+    static get defaultOptions(): any {
+        return foundry.utils.mergeObject(super.defaultOptions, {
+            id: 'ai-gm-panel',
+            title: 'AI Game Master',
+            template: 'modules/ai-gm/templates/ai-game-master-panel.hbs',
+            width: 680,
+            height: 620,
+            resizable: true,
+            classes: ['ai-gm-panel-window'],
+            tabs: [{
+                navSelector: '.ai-gm-tabs',
+                contentSelector: '.ai-gm-tab-content',
+                initial: 'characters'
+            }]
+        });
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  getData – feed all tabs                                            */
+    /* ------------------------------------------------------------------ */
+
+    async getData(_options: any = {}): Promise<any> {
+        // Ensure fields loaded
+        this._ensureFieldsLoaded();
+
+        // Fetch books
+        await this._refreshBooks();
+
+        const ext = game.aiGM?.blueprintGenerator?.schemaExtractor;
+        const actorTypes: string[] = ext?.getActorTypes() ?? ['character'];
+        const actorTypeLabels: Record<string, string> = ext?.getActorTypeLabels() ?? {};
+        const itemTypes: string[] = ext?.getItemTypes() ?? [];
+
+        return {
+            // Characters tab
+            actorTypes: actorTypes.map(id => ({
+                id,
+                label: actorTypeLabels[id] ?? id,
+                selected: id === this.selectedActorType
+            })),
+            fieldTreeHTML: FieldTreeBuilder.buildTree(this.actorFields, this.selectedFields),
+
+            // Items tab
+            itemPacks: game.packs
+                .filter((p: any) => p.documentName === 'Item')
+                .map((p: any) => ({
+                    id: p.collection,
+                    label: p.metadata.label ?? `${p.metadata.packageName}.${p.metadata.name}`
+                })),
+
+            // Library tab
+            books: this.books,
+
+            // Session tab
+            chatHistory: this.chatHistory,
+
+            // System tab
+            systemId: game.system.id,
+            systemTitle: game.system.title,
+            foundryVersion: game.version,
+            actorTypeNames: actorTypes,
+            itemTypeNames: itemTypes,
+            profile: game.aiGM?.snapshotSender?.getCachedProfile() ?? null,
+            wsConnected: game.aiGM?.wsClient?.isConnected() ?? false,
+            serverUrl: API
+        };
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  activateListeners                                                  */
+    /* ------------------------------------------------------------------ */
+
+    activateListeners(html: any): void {
+        super.activateListeners(html);
+
+        // ── Characters tab ──
+        html.find('#gm-actor-type').on('change', this._onActorTypeChange.bind(this));
+        html.find('[data-action="select-all-fields"]').on('click', () => this._toggleAllFields(html, true));
+        html.find('[data-action="deselect-all-fields"]').on('click', () => this._toggleAllFields(html, false));
+        html.find('#gm-field-tree').on('change', '.field-checkbox', this._onFieldToggle.bind(this));
+        html.find('[data-action="generate-character"]').on('click', this._onGenerateCharacter.bind(this));
+        html.find('[data-action="view-blueprint"]').on('click', this._onViewBlueprint.bind(this));
+
+        // ── Items tab ──
+        html.find('[data-action="generate-items"]').on('click', this._onGenerateItems.bind(this));
+
+        // ── Library tab ──
+        html.find('[data-action="upload-book"]').on('click', this._onUploadBook.bind(this));
+        html.find('[data-action="delete-book"]').on('click', this._onDeleteBook.bind(this));
+
+        // ── Session tab ──
+        html.find('[data-action="ask-ai"]').on('click', this._onAskAI.bind(this));
+        html.find('#gm-session-prompt').on('keydown', (ev: any) => {
+            if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); this._onAskAI(ev); }
+        });
+
+        // Token context selector
+        this._refreshSelectedTokens(html);
+        this._syncSelectedTokensFromCanvas({ onlyIfEmpty: true });
+        this._refreshSceneTokenList(html);
+
+        html.find('#gm-scene-tokens').on('change', '.scene-token-checkbox', this._onSceneTokenToggle.bind(this));
+        html.find('[data-action="sync-tokens"]').on('click', () => {
+            this._syncSelectedTokensFromCanvas({ overwrite: true });
+            this._refreshSceneTokenList(html);
+        });
+        html.find('[data-action="clear-tokens"]').on('click', () => {
+            this.selectedTokenIds.clear();
+            this._refreshSceneTokenList(html);
+        });
+
+        // Refresh canvas selection pills whenever token control changes
+        if (this._controlTokenHookId !== null) Hooks.off('controlToken', this._controlTokenHookId);
+        this._controlTokenHookId = Hooks.on('controlToken', () => {
+            this._refreshSelectedTokens(html);
+            // If the user hasn't picked anything yet, seed from canvas selection.
+            if (this.selectedTokenIds.size === 0) {
+                this._syncSelectedTokensFromCanvas({ onlyIfEmpty: true });
+                this._refreshSceneTokenList(html);
+            }
+        });
+
+        // ── System tab ──
+        html.find('[data-action="relearn-system"]').on('click', this._onRelearnSystem.bind(this));
+        html.find('[data-action="reconnect-ws"]').on('click', this._onReconnectWS.bind(this));
+
+        // Dynamic result-card buttons (delegated)
+        html.find('#char-result').on('click', '[data-action="create-character"]', this._onCreateCharacter.bind(this));
+        html.find('#char-result').on('click', '[data-action="export-json"]', this._onExportJSON.bind(this));
+    }
+
+    /* ================================================================== */
+    /*  CHARACTERS TAB                                                     */
+    /* ================================================================== */
+
+    private _ensureFieldsLoaded(): void {
+        if (this.actorFields.length > 0) return;
+        try {
+            const schema = game.aiGM?.blueprintGenerator?.schemaExtractor?.extractActorType(this.selectedActorType);
+            if (!schema) return;
+            this.actorFields = schema.fields;
+            this.selectedFields = new Set(this.actorFields.map((f: FieldDefinition) => f.path));
+        } catch (e) {
+            console.warn('[AI-GM Panel] Could not load fields:', e);
+        }
+    }
+
+    private _onActorTypeChange(ev: any): void {
+        this.selectedActorType = ev.currentTarget.value;
+        try {
+            const schema = game.aiGM.blueprintGenerator.schemaExtractor.extractActorType(this.selectedActorType);
+            this.actorFields = schema.fields;
+            this.selectedFields = new Set(this.actorFields.map((f: FieldDefinition) => f.path));
+        } catch (e) {
+            console.error('[AI-GM Panel] Field load error:', e);
+        }
+        this.render(false);
+    }
+
+    private _toggleAllFields(html: any, selectAll: boolean): void {
+        if (selectAll) {
+            this.selectedFields = new Set(this.actorFields.map((f: FieldDefinition) => f.path));
+        } else {
+            this.selectedFields.clear();
+        }
+        html.find('.field-checkbox').prop('checked', selectAll);
+    }
+
+    private _onFieldToggle(ev: any): void {
+        const path: string = ev.currentTarget.dataset.fieldPath;
+        if (ev.currentTarget.checked) this.selectedFields.add(path);
+        else this.selectedFields.delete(path);
+    }
+
+    private async _onGenerateCharacter(_ev: any): Promise<void> {
+        const html = this.element;
+        const prompt: string = html.find('#gm-char-prompt').val()?.trim();
+        const language: string = html.find('#gm-char-lang').val() || 'ca';
+
+        if (!prompt) return ui.notifications.warn('Please enter a character description.');
+        if (this.selectedFields.size === 0) return ui.notifications.warn('Select at least one field.');
+
+        const btn = html.find('[data-action="generate-character"]');
+        btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Generating…');
+        this._showProgress(html, 'char', 'Starting generation…', 5);
+
+        // WS progress handler
+        const progressHandler = (data: any): void => {
+            if (data?.currentStep) this._showProgress(html, 'char', data.currentStep, data.progress ?? 50);
+        };
+        game.aiGM?.wsClient?.on('onCharacterGenerationStarted', progressHandler);
+
+        try {
+            const selectedArr = Array.from(this.selectedFields);
+            let blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(this.selectedActorType, selectedArr);
+
+            // Enhance with profile
+            if (game.aiGM.postProcessor) blueprint = game.aiGM.postProcessor.enhanceBlueprint(blueprint);
+
+            const sessionId: string | null = game.aiGM?.wsClient?.getSessionId() ?? null;
+            const request = this._charService.buildRequest({
+                prompt,
+                actorType: this.selectedActorType,
+                blueprint,
+                language,
+                sessionId
+            });
+            const charData = await this._charService.generateCharacter(request);
+
+            this.characterData = CharacterDataSanitizer.sanitize(charData);
+            this.validationErrors = [];
+
+            // Validate
+            if (game.aiGM.postProcessor && this.characterData) {
+                this.validationErrors = game.aiGM.postProcessor.validate(this.characterData, blueprint);
+            }
+
+            this._renderCharacterResult(html);
+            this._hideProgress(html, 'char');
+            ui.notifications.info('Character generated!');
+        } catch (e: any) {
+            console.error('[AI-GM Panel] Generation error:', e);
+            ui.notifications.error(`Generation failed: ${e.message}`);
+            this._hideProgress(html, 'char');
+        } finally {
+            game.aiGM?.wsClient?.off('onCharacterGenerationStarted', progressHandler);
+            btn.prop('disabled', false).html('<i class="fas fa-magic"></i> Generate Character');
+        }
+    }
+
+    private _renderCharacterResult(html: any): void {
+        const container = html.find('#char-result');
+        if (!this.characterData) { container.html(''); return; }
+
+        let warningsHTML = '';
+        if (this.validationErrors.length > 0) {
+            warningsHTML = `<div class="validation-warnings"><strong>Warnings:</strong><ul>${
+                this.validationErrors.map(e => `<li>${e.field}: ${e.message}</li>`).join('')
+            }</ul></div>`;
+        }
+
+        container.html(`
+            <div class="result-card">
+                <h4><i class="fas fa-user"></i> ${this.characterData.actor?.name ?? 'Character'}</h4>
+                ${warningsHTML}
+                <div class="btn-row">
+                    <button type="button" class="btn btn-success btn-block" data-action="create-character">
+                        <i class="fas fa-user-plus"></i> Create in Foundry
+                    </button>
+                    <button type="button" class="btn" data-action="export-json">
+                        <i class="fas fa-download"></i> JSON
+                    </button>
+                </div>
+            </div>
+        `);
+    }
+
+    private async _onCreateCharacter(): Promise<void> {
+        if (!this.characterData) return ui.notifications.warn('Generate a character first.');
+        try {
+            const actor = await Actor.create(this.characterData.actor);
+            if (!actor) throw new Error('Actor creation failed');
+            if (this.characterData.items?.length) {
+                await actor.createEmbeddedDocuments('Item', this.characterData.items);
+            }
+            ui.notifications.info(`Created: ${actor.name}`);
+            actor.sheet.render(true);
+            this.characterData = null;
+            this.render(false);
+        } catch (e: any) {
+            ui.notifications.error(`Create failed: ${e.message}`);
+        }
+    }
+
+    private _onExportJSON(): void {
+        if (!this.characterData) return;
+        navigator.clipboard.writeText(JSON.stringify(this.characterData, null, 2));
+        ui.notifications.info('Copied to clipboard');
+    }
+
+    private _onViewBlueprint(): void {
+        const selectedArr = this.selectedFields.size > 0 ? Array.from(this.selectedFields) : null;
+        const blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(this.selectedActorType, selectedArr);
+        new Dialog({
+            title: `Blueprint: ${this.selectedActorType}`,
+            content: `<pre style="max-height:400px;overflow:auto;font-size:0.8rem;">${JSON.stringify(blueprint, null, 2)}</pre>`,
+            buttons: {
+                copy: {
+                    label: 'Copy',
+                    callback: () => {
+                        navigator.clipboard.writeText(JSON.stringify(blueprint, null, 2));
+                        ui.notifications.info('Copied');
+                    }
+                },
+                close: { label: 'Close' }
+            }
+        }).render(true);
+    }
+
+    /* ================================================================== */
+    /*  ITEMS TAB                                                          */
+    /* ================================================================== */
+
+    private async _onGenerateItems(_ev: any): Promise<void> {
+        const html = this.element;
+        const prompt: string = html.find('#gm-item-prompt').val()?.trim();
+        const packId: string = html.find('#gm-item-pack').val();
+
+        if (!prompt) return ui.notifications.warn('Enter an item description.');
+        if (!packId) return ui.notifications.warn('Select a compendium pack.');
+
+        const ws = game.aiGM?.wsClient;
+        if (!ws?.isConnected()) return ui.notifications.error('WebSocket not connected.');
+
+        const requestId = `${ws.getSessionId()}-${Date.now()}`;
+        const ext = game.aiGM?.blueprintGenerator?.schemaExtractor;
+        const validItemTypes = ext?.getItemTypes() ?? [];
+        ws.generateItems(prompt, { packId, requestId, validItemTypes });
+        ui.notifications.info('Item generation sent…');
+    }
+
+    /* ================================================================== */
+    /*  LIBRARY TAB                                                        */
+    /* ================================================================== */
+
+    private async _onUploadBook(_ev: any): Promise<void> {
+        const html = this.element;
+        const fileInput = html.find('#gm-book-file')[0] as HTMLInputElement | undefined;
+        const file = fileInput?.files?.[0];
+        if (!file) return ui.notifications.warn('Select a PDF first.');
+        if (file.type !== 'application/pdf') return ui.notifications.warn('Only PDF files.');
+
+        const bookTitle: string = html.find('#gm-book-title').val()?.trim() || file.name;
+        const sessionId: string = game.aiGM?.wsClient?.getSessionId() ?? `upload-${Date.now()}`;
+
+        this._showProgress(html, 'ingest', 'Uploading…', 0);
+        this._subscribeIngestionProgress(html, sessionId);
+
+        const body = new FormData();
+        body.append('file', file);
+        body.append('worldId', game.world.id);
+        body.append('foundrySystem', game.system.id);
+        body.append('bookTitle', bookTitle);
+        body.append('sessionId', sessionId);
+
+        try {
+            const res = await fetch(`${API}/api/books/upload`, { method: 'POST', body });
+            if (!res.ok) throw new Error(`Server ${res.status}`);
+            ui.notifications.info(`Ingestion started for "${bookTitle}".`);
+        } catch (e: any) {
+            ui.notifications.error(`Upload failed: ${e.message}`);
+            this._hideProgress(html, 'ingest');
+        }
+    }
+
+    private async _onDeleteBook(ev: any): Promise<void> {
+        const bookId: string | undefined = ev.currentTarget.dataset.bookId;
+        if (!bookId) return;
+        const yes = await Dialog.confirm({ title: 'Delete Book', content: '<p>Remove this book and all indexed data?</p>' });
+        if (!yes) return;
+        try {
+            await fetch(`${API}/api/books/${bookId}`, { method: 'DELETE' });
+            ui.notifications.info('Book removed.');
+            this.render(false);
+        } catch (e: any) {
+            ui.notifications.error(`Delete failed: ${e.message}`);
+        }
+    }
+
+    private _subscribeIngestionProgress(html: any, _sessionId: string): void {
+        const ws = game.aiGM?.wsClient;
+        if (!ws) return;
+
+        const handler = (event: any): void => {
+            if (!event) return;
+            this._showProgress(html, 'ingest', event.message ?? 'Processing…', event.progress ?? 0);
+            if (event.status === 'COMPLETED' || event.status === 'FAILED') {
+                setTimeout(() => {
+                    this._hideProgress(html, 'ingest');
+                    this.render(false);
+                }, 1500);
+            }
+        };
+        ws.on('onIngestionStarted', handler);
+        ws.on('onIngestionProgress', handler);
+        ws.on('onIngestionCompleted', handler);
+        ws.on('onIngestionFailed', (event: any) => {
+            this._showProgress(html, 'ingest', `Failed: ${event?.error ?? 'unknown'}`, 100);
+            setTimeout(() => { this._hideProgress(html, 'ingest'); this.render(false); }, 3000);
+        });
+    }
+
+    private async _refreshBooks(): Promise<void> {
+        const worldId = game.world?.id;
+        if (!worldId) { this.books = []; return; }
+        try {
+            const res = await fetch(`${API}/api/books/${worldId}`);
+            this.books = res.ok ? await res.json() : [];
+        } catch { this.books = []; }
+    }
+
+    /* ================================================================== */
+    /*  SESSION TAB                                                        */
+    /* ================================================================== */
+
+    private async _onAskAI(_ev: any): Promise<void> {
+        const html = this.element;
+        const message: string = html.find('#gm-session-prompt').val()?.trim();
+        if (!message) return;
+
+        html.find('#gm-session-prompt').val('');
+        this.chatHistory.push({ sender: 'You', text: message });
+        this._rerenderChat(html);
+
+        const includeTokens = html.find('#gm-include-tokens').is(':checked');
+        const token = includeTokens ? this._getPrimarySelectedToken() : null;
+        const payload = {
+            prompt: message,
+            tokenId: token?.id ?? null,
+            tokenName: token?.name ?? null,
+            worldId: game.world.id,
+            foundrySystem: game.system.id,
+            abilities: token ? this._collectTokenAbilities(token) : [],
+            worldState: this._collectWorldState()
+        };
+
+        try {
+            const res = await fetch(`${API}/gm/respond`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) throw new Error(`Server ${res.status}`);
+            const data = await res.json();
+
+            if (data.narration) {
+                this.chatHistory.push({ sender: 'AI Game Master', text: data.narration });
+                ChatMessage.create({ content: data.narration, speaker: { alias: 'AI Game Master' } });
+            }
+            // Execute VTT actions
+            if (data.actions?.length) await this._executeActions(data.actions);
+
+            this._rerenderChat(html);
+        } catch (e: any) {
+            this.chatHistory.push({ sender: 'System', text: `Error: ${e.message}` });
+            this._rerenderChat(html);
+        }
+    }
+
+    private _rerenderChat(html: any): void {
+        const log = html.find('#gm-chat-log');
+        if (this.chatHistory.length === 0) {
+            log.html('<p class="empty-state">No messages yet.</p>');
+            return;
+        }
+        log.html(this.chatHistory.map((m: ChatEntry) =>
+            `<div class="chat-entry"><span class="chat-sender">${m.sender}</span><div class="chat-text">${m.text}</div></div>`
+        ).join(''));
+        log.scrollTop(log[0].scrollHeight);
+    }
+
+    private _refreshSelectedTokens(html: any): void {
+        const container = html.find('#gm-selected-tokens');
+        if (!container.length) return;
+
+        const controlled = canvas.tokens?.controlled ?? [];
+        if (controlled.length === 0) {
+            container.html('<span class="empty-state">No tokens selected on canvas</span>');
+            return;
+        }
+
+        const pills = controlled.map((t: any) => {
+            const img = t.document?.texture?.src || t.actor?.img || 'icons/svg/mystery-man.svg';
+            const name = this._escapeHtml(t.name || 'Unknown');
+            return `<span class="token-pill"><img src="${img}" alt="${name}"> ${name}</span>`;
+        });
+        container.html(pills.join(''));
+    }
+
+    private _syncSelectedTokensFromCanvas(options: { onlyIfEmpty?: boolean; overwrite?: boolean } = {}): void {
+        const { onlyIfEmpty = false, overwrite = true } = options;
+        if (onlyIfEmpty && this.selectedTokenIds.size > 0) return;
+
+        const controlled = canvas.tokens?.controlled ?? [];
+        if (controlled.length === 0) return;
+
+        const next = new Set<string>(controlled.map((t: any) => String(t.id)));
+        if (overwrite) this.selectedTokenIds = next;
+        else for (const id of next) this.selectedTokenIds.add(id);
+    }
+
+    private _getPrimarySelectedToken(): any | null {
+        const placeables = canvas.tokens?.placeables ?? [];
+
+        for (const id of this.selectedTokenIds) {
+            const t = placeables.find((p: any) => p.id === id);
+            if (t) return t;
+        }
+
+        return canvas.tokens?.controlled?.[0] ?? null;
+    }
+
+    private _onSceneTokenToggle(ev: any): void {
+        const tokenId: string | undefined = ev.currentTarget?.dataset?.tokenId;
+        if (!tokenId) return;
+        if (ev.currentTarget.checked) this.selectedTokenIds.add(tokenId);
+        else this.selectedTokenIds.delete(tokenId);
+    }
+
+    private _refreshSceneTokenList(html: any): void {
+        const container = html.find('#gm-scene-tokens');
+        if (!container.length) return;
+
+        const placeables = canvas.tokens?.placeables ?? [];
+        if (!placeables.length) {
+            container.html('<span class="empty-state">No tokens in this scene</span>');
+            return;
+        }
+
+        const tokens = placeables
+            .filter((t: any) => t?.document)
+            .sort((a: any, b: any) => String(a.name ?? '').localeCompare(String(b.name ?? '')));
+
+        const rows = tokens.map((t: any) => {
+            const img = t.document?.texture?.src || t.actor?.img || 'icons/svg/mystery-man.svg';
+            const name = this._escapeHtml(t.name || 'Unknown');
+            const checked = this.selectedTokenIds.has(t.id) ? 'checked' : '';
+            return `
+              <label class="scene-token-item" title="${name}">
+                <input type="checkbox" class="scene-token-checkbox" data-token-id="${t.id}" ${checked}>
+                <img src="${img}" alt="${name}">
+                <span class="scene-token-name">${name}</span>
+              </label>
+            `;
+        });
+
+        container.html(rows.join(''));
+    }
+
+    private _escapeHtml(text: string): string {
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    async close(options?: any): Promise<void> {
+        if (this._controlTokenHookId !== null) {
+            Hooks.off('controlToken', this._controlTokenHookId);
+            this._controlTokenHookId = null;
+        }
+        return (Application.prototype as any).close.call(this, options);
+    }
+
+    /* ================================================================== */
+    /*  SYSTEM TAB                                                         */
+    /* ================================================================== */
+
+    private async _onRelearnSystem(): Promise<void> {
+        ui.notifications.info('Re-learning system…');
+        try {
+            const profile = await game.aiGM.snapshotSender.sendSnapshot(true);
+            if (profile) game.aiGM.postProcessor.setProfile(profile);
+            ui.notifications.info('System profile refreshed.');
+            this.render(false);
+        } catch (e: any) {
+            ui.notifications.error(`Relearn failed: ${e.message}`);
+        }
+    }
+
+    private async _onReconnectWS(): Promise<void> {
+        try {
+            await game.aiGM.wsClient.connect();
+            ui.notifications.info('WebSocket reconnected.');
+            this.render(false);
+        } catch (e: any) {
+            ui.notifications.error(`Reconnect failed: ${e.message}`);
+        }
+    }
+
+    /* ================================================================== */
+    /*  Shared helpers                                                     */
+    /* ================================================================== */
+
+    private _showProgress(html: any, prefix: string, message: string, percent: number): void {
+        const container = html.find(`#${prefix}-progress`);
+        container.addClass('active');
+        container.find(`#${prefix}-progress-text`).text(message);
+        container.find(`#${prefix}-progress-bar`).css('width', `${percent}%`);
+    }
+
+    private _hideProgress(html: any, prefix: string): void {
+        html.find(`#${prefix}-progress`).removeClass('active');
+    }
+
+    /* ── Token / world state helpers ── */
+
+    private _collectTokenAbilities(token: any): any[] {
+        const actor = token.actor;
+        if (!actor) return [];
+        const abilities: any[] = [];
+
+        for (const item of actor.items) {
+            abilities.push({
+                id: item.id, name: item.name, type: item.type,
+                description: this._stripHtml(item.system?.description?.value || item.system?.description || ''),
+                actionType: item.system?.actionType ?? null,
+                damage: item.system?.damage?.parts?.map((p: any) => ({ formula: p[0], type: p[1] })) ?? [],
+                range: item.system?.range ?? null,
+                uses: item.system?.uses ? { value: item.system.uses.value, max: item.system.uses.max, per: item.system.uses.per } : null,
+                level: item.system?.level ?? null
+            });
+        }
+        if (actor.system?.abilities) {
+            for (const [k, v] of Object.entries(actor.system.abilities)) {
+                abilities.push({ id: `ability-${k}`, name: k.toUpperCase(), type: 'ability-score', value: (v as any).value, mod: (v as any).mod });
+            }
+        }
+        if (actor.system?.skills) {
+            for (const [k, v] of Object.entries(actor.system.skills)) {
+                abilities.push({ id: `skill-${k}`, name: k, type: 'skill', value: (v as any).total ?? (v as any).value, proficient: (v as any).proficient });
+            }
+        }
+        return abilities;
+    }
+
+    private _collectWorldState(): any {
+        const scene = game.scenes?.active;
+        return {
+            sceneName: scene?.name ?? null,
+            sceneId: scene?.id ?? null,
+            tokens: scene ? canvas.tokens.placeables.map((t: any) => ({
+                id: t.id, name: t.name, x: t.x, y: t.y,
+                actorId: t.actor?.id ?? null,
+                hp: t.actor?.system?.attributes?.hp ? { value: t.actor.system.attributes.hp.value, max: t.actor.system.attributes.hp.max } : null,
+                disposition: t.document?.disposition
+            })) : [],
+            combat: game.combat ? { round: game.combat.round, turn: game.combat.turn, currentCombatantId: game.combat.combatant?.tokenId } : null
+        };
+    }
+
+    private _stripHtml(html: string): string {
+        if (!html) return '';
+        const tmp = document.createElement('DIV');
+        tmp.innerHTML = html;
+        return tmp.textContent || tmp.innerText || '';
+    }
+
+    private async _executeActions(actions: VTTAction[]): Promise<void> {
+        for (const action of actions) {
+            try {
+                switch (action.type) {
+                    case 'createToken': {
+                        const scene = game.scenes.active;
+                        await scene.createEmbeddedDocuments('Token', [{ name: action.name, img: action.img, x: action.x, y: action.y, actorId: action.actorId }]);
+                        break;
+                    }
+                    case 'applyDamage': {
+                        const actor = game.actors.get(action.target);
+                        if (actor) await actor.applyDamage(action.amount);
+                        break;
+                    }
+                    case 'moveToken': {
+                        const tok = canvas.tokens.get(action.tokenId);
+                        if (tok) await tok.document.update({ x: action.x, y: action.y });
+                        break;
+                    }
+                    case 'useAbility': {
+                        const tok = canvas.tokens.get(action.tokenId);
+                        const item = tok?.actor?.items.get(action.abilityId);
+                        if (item) await item.use({}, { event: null });
+                        break;
+                    }
+                    case 'rollAbilityCheck': {
+                        const tok = canvas.tokens.get(action.tokenId);
+                        if (tok?.actor) await tok.actor.rollAbilityTest(action.ability);
+                        break;
+                    }
+                    case 'rollSkillCheck': {
+                        const tok = canvas.tokens.get(action.tokenId);
+                        if (tok?.actor) await tok.actor.rollSkill(action.skill);
+                        break;
+                    }
+                    case 'rollSavingThrow': {
+                        const tok = canvas.tokens.get(action.tokenId);
+                        if (tok?.actor) await tok.actor.rollAbilitySave(action.ability);
+                        break;
+                    }
+                }
+            } catch (e) {
+                console.error(`[AI-GM] Action ${action.type} failed:`, e);
+            }
+        }
+    }
+}
+

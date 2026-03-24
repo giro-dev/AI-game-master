@@ -13,7 +13,7 @@ public class CharacterBlueprintDto {
 
     // New simplified structure from Foundry (flat array of fields)
     private List<Object> actorFields;
-
+    
     // Legacy structure (nested)
     private ActorBlueprintDto actor;
     private List<ItemTypeDto> availableItems;

@@ -1,0 +1,526 @@
+/* ─── AI Game Master Panel ─────────────────────────────────────────── */
+
+.ai-gm-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-family: var(--font-primary, "Signika", sans-serif);
+}
+
+/* ─── Tab Navigation ───────────────────────────────────────────────── */
+
+.ai-gm-panel nav.ai-gm-tabs {
+  display: flex;
+  gap: 0;
+  background: rgba(0, 0, 0, 0.08);
+  border-bottom: 2px solid var(--color-border-dark, #444);
+  flex-shrink: 0;
+}
+
+.ai-gm-panel nav.ai-gm-tabs .item {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ai-gm-panel nav.ai-gm-tabs .item:hover {
+  color: #333;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.ai-gm-panel nav.ai-gm-tabs .item.active {
+  color: #7b2fb5;
+  border-bottom-color: #7b2fb5;
+  background: transparent;
+}
+
+.ai-gm-panel nav.ai-gm-tabs .item i {
+  font-size: 0.9rem;
+}
+
+/* ─── Tab Content ──────────────────────────────────────────────────── */
+
+.ai-gm-panel .ai-gm-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+}
+
+.ai-gm-panel .ai-gm-tab-content .tab {
+  display: none;
+}
+
+.ai-gm-panel .ai-gm-tab-content .tab.active {
+  display: block;
+}
+
+/* ─── Shared Form Styles ───────────────────────────────────────────── */
+
+.ai-gm-panel .form-group {
+  margin-bottom: 0.75rem;
+}
+
+.ai-gm-panel .form-group > label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.ai-gm-panel input[type="text"],
+.ai-gm-panel input[type="file"],
+.ai-gm-panel select,
+.ai-gm-panel textarea {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #999;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 0.85rem;
+}
+
+.ai-gm-panel textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.ai-gm-panel .hint {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: #888;
+  margin-top: 0.15rem;
+}
+
+/* ─── Buttons ──────────────────────────────────────────────────────── */
+
+.ai-gm-panel .btn-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.ai-gm-panel .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid #999;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  background: linear-gradient(to bottom, #f7f7f7, #e8e8e8);
+}
+
+.ai-gm-panel .btn:hover {
+  background: linear-gradient(to bottom, #fff, #eee);
+  border-color: #666;
+}
+
+.ai-gm-panel .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-gm-panel .btn-primary {
+  background: linear-gradient(to bottom, #9b59b6, #7b2fb5);
+  color: white;
+  border-color: #6a2a9a;
+}
+
+.ai-gm-panel .btn-primary:hover {
+  background: linear-gradient(to bottom, #a96bc7, #8e44ad);
+}
+
+.ai-gm-panel .btn-success {
+  background: linear-gradient(to bottom, #27ae60, #1e8449);
+  color: white;
+  border-color: #196f3d;
+}
+
+.ai-gm-panel .btn-danger {
+  background: none;
+  border: none;
+  color: #c0392b;
+  padding: 0.25rem;
+  cursor: pointer;
+}
+
+.ai-gm-panel .btn-sm {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.ai-gm-panel .btn-block {
+  flex: 1;
+}
+
+/* ─── Section Headers ──────────────────────────────────────────────── */
+
+.ai-gm-panel .section-header {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0.75rem 0 0.4rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid #ddd;
+  color: #444;
+}
+
+.ai-gm-panel .section-header:first-child {
+  margin-top: 0;
+}
+
+/* ─── Field Tree (Character Tab) ───────────────────────────────────── */
+
+.ai-gm-panel .field-selector {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+
+.ai-gm-panel .field-selector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.ai-gm-panel .field-tree {
+  max-height: 250px;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid #ddd;
+  padding: 0.4rem;
+  border-radius: 2px;
+}
+
+.ai-gm-panel .field-item {
+  padding: 0.15rem 0;
+  display: flex;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.ai-gm-panel .field-item input[type="checkbox"] {
+  width: auto;
+  margin-right: 0.4rem;
+  flex-shrink: 0;
+}
+
+.ai-gm-panel .field-item .field-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-gm-panel .field-item .field-type {
+  font-size: 0.72rem;
+  color: #999;
+  margin-left: 0.4rem;
+  flex-shrink: 0;
+}
+
+.ai-gm-panel .field-item.depth-1 { padding-left: 1.2rem; }
+.ai-gm-panel .field-item.depth-2 { padding-left: 2.4rem; }
+.ai-gm-panel .field-item.depth-3 { padding-left: 3.6rem; }
+
+/* ─── Generated Result Card ────────────────────────────────────────── */
+
+.ai-gm-panel .result-card {
+  margin-top: 0.75rem;
+  padding: 0.6rem;
+  background: rgba(155, 89, 182, 0.06);
+  border: 1px solid rgba(155, 89, 182, 0.25);
+  border-radius: 4px;
+}
+
+.ai-gm-panel .result-card h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+  color: #7b2fb5;
+}
+
+.ai-gm-panel .validation-warnings {
+  background: #fff8e1;
+  border: 1px solid #ffcc02;
+  padding: 0.4rem 0.6rem;
+  border-radius: 3px;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.ai-gm-panel .validation-warnings ul {
+  margin: 0.25rem 0 0 1.2rem;
+  padding: 0;
+}
+
+/* ─── Book List (Library Tab) ──────────────────────────────────────── */
+
+.ai-gm-panel .book-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.ai-gm-panel .book-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #eee;
+  font-size: 0.85rem;
+}
+
+.ai-gm-panel .book-entry .book-meta {
+  color: #888;
+  font-size: 0.75rem;
+  margin-left: 0.4rem;
+}
+
+.ai-gm-panel .empty-state {
+  text-align: center;
+  color: #999;
+  font-style: italic;
+  padding: 1rem 0;
+  font-size: 0.85rem;
+}
+
+/* ─── Progress Bar ─────────────────────────────────────────────────── */
+
+.ai-gm-panel .progress-container {
+  margin-top: 0.5rem;
+  display: none;
+}
+
+.ai-gm-panel .progress-container.active {
+  display: block;
+}
+
+.ai-gm-panel .progress-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  margin-bottom: 0.25rem;
+}
+
+.ai-gm-panel .progress-bar-track {
+  background: #ddd;
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+}
+
+.ai-gm-panel .progress-bar-fill {
+  background: #7b2fb5;
+  height: 100%;
+  border-radius: 4px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+/* ─── Session / Chat (Session Tab) ─────────────────────────────────── */
+
+.ai-gm-panel .chat-log {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  padding: 0.5rem;
+  background: white;
+  border-radius: 3px;
+  margin-bottom: 0.5rem;
+}
+
+.ai-gm-panel .chat-entry {
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.ai-gm-panel .chat-entry .chat-sender {
+  font-weight: 700;
+  color: #7b2fb5;
+}
+
+.ai-gm-panel .chat-entry .chat-text {
+  margin-top: 0.15rem;
+  line-height: 1.4;
+}
+
+/* ─── System Profile (System Tab) ──────────────────────────────────── */
+
+.ai-gm-panel .profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.ai-gm-panel .profile-card {
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  padding: 0.5rem;
+}
+
+.ai-gm-panel .profile-card h5 {
+  margin: 0 0 0.3rem;
+  font-size: 0.82rem;
+  color: #555;
+}
+
+.ai-gm-panel .profile-card ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.8rem;
+}
+
+.ai-gm-panel .profile-card .value {
+  font-weight: 600;
+  color: #333;
+}
+
+.ai-gm-panel .status-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.ai-gm-panel .status-badge.connected { background: #d4edda; color: #155724; }
+.ai-gm-panel .status-badge.disconnected { background: #f8d7da; color: #721c24; }
+.ai-gm-panel .status-badge.learned { background: #d1ecf1; color: #0c5460; }
+
+/* ─── Token Context Selector ───────────────────────────────────────── */
+
+.ai-gm-panel .selected-tokens-widget {
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ai-gm-panel .selected-tokens-header {
+  margin-bottom: 0.35rem;
+}
+
+.ai-gm-panel .selected-tokens-header label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #555;
+  cursor: pointer;
+}
+
+.ai-gm-panel .selected-tokens-header input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.ai-gm-panel .token-section {
+  margin-top: 0.5rem;
+}
+
+.ai-gm-panel .token-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #666;
+  margin-bottom: 0.25rem;
+}
+
+.ai-gm-panel .selected-tokens-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-height: 28px;
+  align-items: center;
+}
+
+.ai-gm-panel .selected-tokens-list .empty-state,
+.ai-gm-panel .scene-tokens-list .empty-state {
+  font-size: 0.75rem;
+  font-style: italic;
+  color: #aaa;
+}
+
+.ai-gm-panel .token-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.5rem 0.2rem 0.25rem;
+  background: #e9e2f3;
+  border: 1px solid #c5b3db;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #4a2d6e;
+  white-space: nowrap;
+}
+
+.ai-gm-panel .token-pill img {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid #b49ed4;
+}
+
+.ai-gm-panel .scene-tokens-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+.ai-gm-panel .scene-tokens-list {
+  border: 1px solid #ccc;
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 3px;
+  padding: 0.35rem 0.4rem;
+  max-height: 150px;
+  overflow: auto;
+}
+
+.ai-gm-panel .scene-token-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  padding: 0.15rem 0;
+  cursor: pointer;
+}
+
+.ai-gm-panel .scene-token-item input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.ai-gm-panel .scene-token-item img {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.ai-gm-panel .scene-token-item .scene-token-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

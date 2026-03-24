@@ -2,6 +2,7 @@ package dev.agiro.masterserver.dto;
 
 import lombok.Data;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,9 +23,13 @@ public class ItemGenerationRequest {
     /** System/actor context (optional) */
     private String systemId;
     private String actorType;
+    private String worldId;
 
     /** Target pack (Foundry compendium) like "world.items" */
     private String packId;
+
+    /** Valid item types for this system (e.g. ["equipamiento", "arma"]) */
+    private List<String> validItemTypes;
 
     /** Optional blueprint/skeleton describing allowed item fields */
     private Map<String, Object> blueprint;

@@ -6,7 +6,6 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.ai.retry.NonTransientAiException;
 
@@ -33,7 +32,6 @@ public class PdfProcessingService {
         return (int) Math.ceil(text.length() / 4.0);
     }
 
-    @Transactional
     public int processPdfByTableOfContents(MultipartFile file, String foundrySystem) throws java.io.IOException {
         List<Document> docsFromPdfWithCatalog = pdfDocumentReader.getDocsFromPdfWithCatalog(file, foundrySystem);
 

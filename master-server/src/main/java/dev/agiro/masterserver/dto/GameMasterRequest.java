@@ -9,6 +9,8 @@ public class GameMasterRequest {
     private String prompt;
     private String tokenId;
     private String tokenName;
+    private String worldId;
+    private String foundrySystem;
     private List<AbilityDto> abilities;
     private WorldStateDto worldState;
 

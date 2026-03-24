@@ -51,9 +51,16 @@ public class WebSocketMessage {
         IMAGE_GENERATION_FAILED,
 
         // Item related events
+        ITEM_GENERATION_REQUEST,
         ITEM_GENERATION_STARTED,
         ITEM_GENERATION_COMPLETED,
         ITEM_GENERATION_FAILED,
+
+        // Book ingestion events
+        INGESTION_STARTED,
+        INGESTION_PROGRESS,
+        INGESTION_COMPLETED,
+        INGESTION_FAILED,
 
         // Generic notifications
         NOTIFICATION,
