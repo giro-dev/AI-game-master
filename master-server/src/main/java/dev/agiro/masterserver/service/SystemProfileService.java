@@ -2,6 +2,7 @@ package dev.agiro.masterserver.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.agiro.masterserver.dto.ReferenceCharacterDto;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import dev.agiro.masterserver.dto.SystemSnapshotDto;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +30,7 @@ public class SystemProfileService {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final RAGService ragService;
+    private final ReferenceCharacterRepository referenceCharacterRepository;
     private final Map<String, SystemProfileDto> profileCache = new ConcurrentHashMap<>();
 
     private static final String FIELD_GROUPING_PROMPT = """
@@ -99,7 +101,8 @@ public class SystemProfileService {
 
     public SystemProfileService(ChatClient.Builder chatClientBuilder,
                                 ObjectMapper objectMapper,
-                                RAGService ragService) {
+                                RAGService ragService,
+                                ReferenceCharacterRepository referenceCharacterRepository) {
         this.chatClient = chatClientBuilder
                 .defaultOptions(ChatOptions.builder()
                         .model("gpt-4.1-mini")
@@ -108,6 +111,7 @@ public class SystemProfileService {
                 .build();
         this.objectMapper = objectMapper;
         this.ragService = ragService;
+        this.referenceCharacterRepository = referenceCharacterRepository;
     }
 
     /**
@@ -561,7 +565,30 @@ public class SystemProfileService {
         List<SystemProfileDto.DetectedConstraint> constraints;
         Map<String, List<String>> creationChoices;
     }
+
+    // ── Reference Character storage (delegated to OpenSearch repository) ──
+
+    /**
+     * Store a reference character for a given system + actor type.
+     * Persisted in OpenSearch and cached in memory.
+     */
+    public void storeReferenceCharacter(ReferenceCharacterDto ref) {
+        referenceCharacterRepository.save(ref);
+        log.info("Stored reference character '{}' for {}:{}", ref.getLabel(), ref.getSystemId(), ref.getActorType());
+    }
+
+    /**
+     * Retrieve the reference character for a given system + actor type.
+     */
+    public Optional<ReferenceCharacterDto> getReferenceCharacter(String systemId, String actorType) {
+        return referenceCharacterRepository.find(systemId, actorType);
+    }
+
+    /**
+     * Delete the reference character for a given system + actor type.
+     */
+    public void deleteReferenceCharacter(String systemId, String actorType) {
+        referenceCharacterRepository.delete(systemId, actorType);
+        log.info("Deleted reference character for {}:{}", systemId, actorType);
+    }
 }
-
-
-

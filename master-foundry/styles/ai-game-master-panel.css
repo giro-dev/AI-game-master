@@ -149,11 +149,15 @@
 }
 
 .ai-gm-panel .btn-danger {
-  background: none;
-  border: none;
-  color: #c0392b;
+  background: #c62828;
+  color: #fff;
+  border: 1px solid #b71c1c;
   padding: 0.25rem;
   cursor: pointer;
+}
+
+.ai-gm-panel .btn-danger:hover {
+  background: #b71c1c;
 }
 
 .ai-gm-panel .btn-sm {
@@ -523,4 +527,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ─── Reference Character Indicator ───────────────────────────────── */
+
+.ai-gm-panel .reference-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.7rem;
+  margin: 0.25rem 0 0.5rem;
+  background: linear-gradient(135deg, rgba(46, 125, 50, 0.12), rgba(46, 125, 50, 0.06));
+  border: 1px solid rgba(46, 125, 50, 0.35);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #2e7d32;
+}
+
+.ai-gm-panel .reference-indicator i {
+  color: #2e7d32;
+}
+
+.ai-gm-panel .reference-indicator .hint {
+  color: #666;
+  margin: 0;
+  font-size: 0.75rem;
 }

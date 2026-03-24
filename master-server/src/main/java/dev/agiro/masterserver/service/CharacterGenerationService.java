@@ -216,12 +216,24 @@ public class CharacterGenerationService {
         } else {
             systemContext = getActorTypeGuidance(request.getActorType(), systemId);
         }
+
+        // Inject reference character context if available
+        String referenceContext = "";
+        var refOpt = systemProfileService.getReferenceCharacter(systemId, request.getActorType());
+        if (refOpt.isPresent()) {
+            referenceContext = promptBuilder.buildReferenceCharacterContext(refOpt.get(), "system");
+            log.info("Using reference character '{}' for core concept generation", refOpt.get().getLabel());
+        }
         
         String userPrompt = String.format(
-            "System: %s\nActor Type: %s\n\n%s\n\nUser Request: %s\n\nCreate a character concept.",
+            "System: %s\nActor Type: %s\n\n%s\n\n%s\n\nUser Request: %s\n\n" +
+            "Create a character concept. " +
+            "IMPORTANT: Your response MUST be a JSON object with a \"name\" key (the character's name as a string). " +
+            "Do NOT omit the \"name\" key. Example: {\"name\": \"Character Name\", \"concept\": \"...\", ...}",
             systemId,
             request.getActorType(),
             systemContext,
+            referenceContext,
             request.getPrompt()
         );
 
@@ -237,7 +249,10 @@ public class CharacterGenerationService {
                 .content();
 
         responseJson = cleanJsonResponse(responseJson);
-        return objectMapper.readValue(responseJson, Map.class);
+        log.debug("Core concept raw response: {}", responseJson);
+        Map<String, Object> concept = objectMapper.readValue(responseJson, Map.class);
+        log.info("Core concept keys: {}, name='{}'", concept.keySet(), concept.get("name"));
+        return concept;
     }
 
     /**
@@ -456,12 +471,21 @@ public class CharacterGenerationService {
         
         SystemProfileDto profile = resolveProfile(request.getBlueprint().getSystemId());
 
+        // Look up reference character for this system+actorType
+        var refOpt = systemProfileService.getReferenceCharacter(
+                request.getBlueprint().getSystemId(), request.getActorType());
+
         StringBuilder userPrompt = new StringBuilder();
         userPrompt.append("Character Concept:\n");
         userPrompt.append(objectMapper.writeValueAsString(coreConcept)).append("\n\n");
         
         userPrompt.append("System Rules & Context:\n");
         userPrompt.append(systemContext).append("\n\n");
+
+        // Inject reference character's system data so the AI sees exact field paths & value types
+        if (refOpt.isPresent()) {
+            userPrompt.append(promptBuilder.buildReferenceCharacterContext(refOpt.get(), "system"));
+        }
         
         userPrompt.append("Fields to fill:\n");
         userPrompt.append(objectMapper.writeValueAsString(fields)).append("\n\n");
@@ -546,25 +570,35 @@ public class CharacterGenerationService {
             Map<String, Object> coreConcept,
             CreateCharacterRequest request,
             String language) throws Exception {
-        
-        if (request.getBlueprint().getAvailableItems() == null || 
-            request.getBlueprint().getAvailableItems().isEmpty()) {
-            log.info("No available items in blueprint, skipping item generation");
+
+        String systemId = request.getBlueprint().getSystemId();
+        var refOpt = systemProfileService.getReferenceCharacter(systemId, request.getActorType());
+
+        // If no available items in blueprint AND no reference character, skip
+        boolean hasBlueprint = request.getBlueprint().getAvailableItems() != null &&
+                !request.getBlueprint().getAvailableItems().isEmpty();
+        boolean hasReference = refOpt.isPresent() && refOpt.get().getItems() != null &&
+                !refOpt.get().getItems().isEmpty();
+
+        if (!hasBlueprint && !hasReference) {
+            log.info("No available items in blueprint and no reference character, skipping item generation");
             return List.of();
         }
 
-        SystemProfileDto profile = resolveProfile(request.getBlueprint().getSystemId());
+        SystemProfileDto profile = resolveProfile(systemId);
 
         // Get RAG context for items
-        List<String> itemTypes = request.getBlueprint().getAvailableItems().stream()
-                .map(item -> {
-                    if (item instanceof Map) {
-                        return (String) ((Map<?, ?>) item).get("type");
-                    }
-                    return null;
-                })
-                .filter(type -> type != null)
-                .collect(Collectors.toList());
+        List<String> itemTypes = request.getBlueprint().getAvailableItems() != null
+                ? request.getBlueprint().getAvailableItems().stream()
+                    .map(item -> {
+                        if (item instanceof Map) {
+                            return (String) ((Map<?, ?>) item).get("type");
+                        }
+                        return null;
+                    })
+                    .filter(type -> type != null)
+                    .collect(Collectors.toList())
+                : List.of();
 
         String itemContext = "";
         if (!itemTypes.isEmpty()) {
@@ -587,9 +621,18 @@ public class CharacterGenerationService {
         if (profile != null) {
             userPrompt.append(promptBuilder.buildSystemContext(profile)).append("\n");
         }
+
+        // ── Reference character's items: the single most important context for items ──
+        if (hasReference) {
+            userPrompt.append(promptBuilder.buildReferenceCharacterContext(refOpt.get(), "items"));
+            userPrompt.append("IMPORTANT: Your generated items MUST use the EXACT same structure (type, system fields) as the reference items above.\n");
+            userPrompt.append("Clone the reference item structures but change names, descriptions, and values to fit the new character concept.\n\n");
+        }
         
-        userPrompt.append("Available Item Types:\n");
-        userPrompt.append(objectMapper.writeValueAsString(request.getBlueprint().getAvailableItems())).append("\n\n");
+        if (hasBlueprint) {
+            userPrompt.append("Available Item Types:\n");
+            userPrompt.append(objectMapper.writeValueAsString(request.getBlueprint().getAvailableItems())).append("\n\n");
+        }
         
         if (!itemContext.isEmpty()) {
             userPrompt.append("Item Rules from Manuals:\n");
@@ -631,11 +674,13 @@ public class CharacterGenerationService {
         CreateCharacterResponse response = new CreateCharacterResponse();
         response.setSuccess(true);
         
-        // Build actor
+        // Build actor — extract name with fallbacks for localized AI responses
         CreateCharacterResponse.ActorDto actor = new CreateCharacterResponse.ActorDto();
-        actor.setName((String) coreConcept.get("name"));
+        String name = extractName(coreConcept);
+        actor.setName(name);
         actor.setType(actorType);
         actor.setImg("icons/svg/mystery-man.svg");
+        log.info("Assembled character name: '{}'", name);
         
         // Build nested system data structure from flat field paths
         Map<String, Object> nestedSystem = buildNestedStructure(systemData, coreConcept);
@@ -887,6 +932,46 @@ public class CharacterGenerationService {
         }
 
         return response.trim();
+    }
+
+    /**
+     * Extract the character name from the AI's core concept response.
+     * The AI might use localized keys depending on the prompt language,
+     * so we try multiple candidate keys before falling back.
+     */
+    private String extractName(Map<String, Object> coreConcept) {
+        // Try standard keys first
+        List<String> candidateKeys = List.of(
+                "name", "nombre", "nom", "nome", "Name",
+                "character_name", "characterName",
+                "actor_name", "actorName"
+        );
+        for (String key : candidateKeys) {
+            Object val = coreConcept.get(key);
+            if (val instanceof String s && !s.isBlank()) {
+                return s;
+            }
+        }
+
+        // Case-insensitive search
+        for (Map.Entry<String, Object> entry : coreConcept.entrySet()) {
+            if (entry.getKey().toLowerCase().contains("name") || entry.getKey().toLowerCase().contains("nom")) {
+                if (entry.getValue() instanceof String s && !s.isBlank()) {
+                    return s;
+                }
+            }
+        }
+
+        // Last resort: use first non-blank string value
+        for (Object val : coreConcept.values()) {
+            if (val instanceof String s && !s.isBlank() && s.length() < 60) {
+                log.warn("Could not find 'name' key in core concept, using first short string: '{}'", s);
+                return s;
+            }
+        }
+
+        log.warn("No name found in core concept: {}", coreConcept.keySet());
+        return "AI Character";
     }
 }
 

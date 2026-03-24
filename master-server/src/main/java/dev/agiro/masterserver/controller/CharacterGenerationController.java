@@ -4,11 +4,15 @@ import dev.agiro.masterserver.dto.CreateCharacterRequest;
 import dev.agiro.masterserver.dto.CreateCharacterResponse;
 import dev.agiro.masterserver.dto.ExplainCharacterRequest;
 import dev.agiro.masterserver.dto.ExplainCharacterResponse;
+import dev.agiro.masterserver.dto.ReferenceCharacterDto;
 import dev.agiro.masterserver.service.CharacterGenerationService;
+import dev.agiro.masterserver.service.SystemProfileService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.Instant;
 
 @Slf4j
 @RestController
@@ -17,9 +21,12 @@ import org.springframework.web.bind.annotation.*;
 public class CharacterGenerationController {
 
     private final CharacterGenerationService characterGenerationService;
+    private final SystemProfileService systemProfileService;
 
-    public CharacterGenerationController(CharacterGenerationService characterGenerationService) {
+    public CharacterGenerationController(CharacterGenerationService characterGenerationService,
+                                         SystemProfileService systemProfileService) {
         this.characterGenerationService = characterGenerationService;
+        this.systemProfileService = systemProfileService;
     }
 
     /**
@@ -89,5 +96,52 @@ public class CharacterGenerationController {
             errorResponse.setExplanation("Failed to explain character: " + e.getMessage());
             return ResponseEntity.internalServerError().body(errorResponse);
         }
+    }
+
+    // ── Reference Character Introspection ───────────────────────────────
+
+    /**
+     * Store a reference character (captured from a manually-created character in Foundry).
+     * This becomes the structural template for AI character generation.
+     */
+    @PostMapping(value = "/reference",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ReferenceCharacterDto> storeReferenceCharacter(@RequestBody ReferenceCharacterDto request) {
+        log.info("Storing reference character '{}' for system={}, actorType={}",
+                request.getLabel(), request.getSystemId(), request.getActorType());
+
+        if (request.getSystemId() == null || request.getActorType() == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        request.setCapturedAt(Instant.now());
+        systemProfileService.storeReferenceCharacter(request);
+
+        return ResponseEntity.ok(request);
+    }
+
+    /**
+     * Retrieve the stored reference character for a given system + actor type.
+     */
+    @GetMapping(value = "/reference/{systemId}/{actorType}",
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ReferenceCharacterDto> getReferenceCharacter(
+            @PathVariable String systemId,
+            @PathVariable String actorType) {
+        return systemProfileService.getReferenceCharacter(systemId, actorType)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Delete the stored reference character for a given system + actor type.
+     */
+    @DeleteMapping(value = "/reference/{systemId}/{actorType}")
+    public ResponseEntity<Void> deleteReferenceCharacter(
+            @PathVariable String systemId,
+            @PathVariable String actorType) {
+        systemProfileService.deleteReferenceCharacter(systemId, actorType);
+        return ResponseEntity.ok().build();
     }
 }

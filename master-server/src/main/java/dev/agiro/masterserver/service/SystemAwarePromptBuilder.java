@@ -1,6 +1,7 @@
 package dev.agiro.masterserver.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.agiro.masterserver.dto.ReferenceCharacterDto;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -241,6 +242,109 @@ public class SystemAwarePromptBuilder {
         }
 
         return groups;
+    }
+
+    // ── Reference Character Context ─────────────────────────────────────
+
+    /**
+     * Build a context block showing the reference character's data structure.
+     * This is the single most impactful prompt enhancement: the AI sees a REAL
+     * character and can replicate its exact structure.
+     *
+     * @param ref      The stored reference character
+     * @param section  Which part to show: "system" (actor.system data), "items", or "all"
+     * @return prompt context block
+     */
+    public String buildReferenceCharacterContext(ReferenceCharacterDto ref, String section) {
+        if (ref == null) return "";
+
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("\n=== REFERENCE CHARACTER (").append(ref.getLabel()).append(") ===\n");
+        ctx.append("This is a real, manually-created character. Your output MUST match this exact structure.\n\n");
+
+        try {
+            if ("system".equals(section) || "all".equals(section)) {
+                // Extract only actor.system data (the part AI fills)
+                Map<String, Object> actorData = ref.getActorData();
+                if (actorData != null) {
+                    Object systemData = actorData.get("system");
+                    if (systemData != null) {
+                        String systemJson = objectMapper.writerWithDefaultPrettyPrinter()
+                                .writeValueAsString(systemData);
+                        // Truncate if massive
+                        if (systemJson.length() > 6000) {
+                            systemJson = systemJson.substring(0, 6000) + "\n... (truncated)";
+                        }
+                        ctx.append("REFERENCE actor.system data (your field values must use the same paths and value types):\n");
+                        ctx.append(systemJson).append("\n\n");
+                    }
+                }
+            }
+
+            if ("items".equals(section) || "all".equals(section)) {
+                List<Map<String, Object>> items = ref.getItems();
+                if (items != null && !items.isEmpty()) {
+                    ctx.append("REFERENCE embedded items (your generated items MUST use the same structure):\n");
+                    // Show up to 3 items as examples, one per distinct type
+                    Set<String> seenTypes = new HashSet<>();
+                    int shown = 0;
+                    for (Map<String, Object> item : items) {
+                        String type = (String) item.get("type");
+                        if (type != null && seenTypes.contains(type)) continue;
+                        if (type != null) seenTypes.add(type);
+                        
+                        String itemJson = objectMapper.writerWithDefaultPrettyPrinter()
+                                .writeValueAsString(item);
+                        if (itemJson.length() > 2000) {
+                            itemJson = itemJson.substring(0, 2000) + "\n... (truncated)";
+                        }
+                        ctx.append("Item example (type=").append(type).append("):\n");
+                        ctx.append(itemJson).append("\n\n");
+                        
+                        if (++shown >= 5) break; // limit to 5 distinct types
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to serialize reference character context: {}", e.getMessage());
+            ctx.append("(Failed to serialize reference data)\n");
+        }
+
+        ctx.append("=== END REFERENCE CHARACTER ===\n\n");
+        return ctx.toString();
+    }
+
+    /**
+     * Build a compact structural summary of the reference character's items.
+     * Shows available item types and their field structure without all the values.
+     */
+    public String buildReferenceItemStructureSummary(ReferenceCharacterDto ref) {
+        if (ref == null || ref.getItems() == null || ref.getItems().isEmpty()) return "";
+
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("REFERENCE ITEM STRUCTURES (your items must match these formats exactly):\n");
+
+        Map<String, Map<String, Object>> typeExamples = new LinkedHashMap<>();
+        for (Map<String, Object> item : ref.getItems()) {
+            String type = (String) item.get("type");
+            if (type != null && !typeExamples.containsKey(type)) {
+                typeExamples.put(type, item);
+            }
+        }
+
+        try {
+            for (var entry : typeExamples.entrySet()) {
+                ctx.append("\nType \"").append(entry.getKey()).append("\":\n");
+                String json = objectMapper.writerWithDefaultPrettyPrinter()
+                        .writeValueAsString(entry.getValue());
+                if (json.length() > 1500) json = json.substring(0, 1500) + "...";
+                ctx.append(json).append("\n");
+            }
+        } catch (Exception e) {
+            log.warn("Failed to build item structure summary: {}", e.getMessage());
+        }
+
+        return ctx.toString();
     }
 }
 

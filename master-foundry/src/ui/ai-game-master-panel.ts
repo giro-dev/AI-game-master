@@ -70,16 +70,53 @@ export class AIGameMasterPanel extends Application {
     /* ------------------------------------------------------------------ */
 
     async getData(_options: any = {}): Promise<any> {
-        // Ensure fields loaded
-        this._ensureFieldsLoaded();
+        try {
+            this._ensureFieldsLoaded();
+        } catch (e) {
+            console.warn('[AI-GM Panel] Field loading failed:', e);
+        }
 
-        // Fetch books
         await this._refreshBooks();
 
         const ext = game.aiGM?.blueprintGenerator?.schemaExtractor;
-        const actorTypes: string[] = ext?.getActorTypes() ?? ['character'];
-        const actorTypeLabels: Record<string, string> = ext?.getActorTypeLabels() ?? {};
-        const itemTypes: string[] = ext?.getItemTypes() ?? [];
+        let actorTypes: string[] = ['character'];
+        let actorTypeLabels: Record<string, string> = {};
+        let itemTypes: string[] = [];
+
+        try {
+            actorTypes = ext?.getActorTypes() ?? ['character'];
+            actorTypeLabels = ext?.getActorTypeLabels() ?? {};
+            itemTypes = ext?.getItemTypes() ?? [];
+        } catch (e) {
+            console.warn('[AI-GM Panel] Schema extraction failed:', e);
+        }
+
+        let itemPacks: any[] = [];
+        try {
+            itemPacks = game.packs
+                ?.filter((p: any) => p.documentName === 'Item')
+                ?.map((p: any) => ({
+                    id: p.collection,
+                    label: p.metadata?.label ?? `${p.metadata?.packageName}.${p.metadata?.name}`
+                })) ?? [];
+        } catch (e) {
+            console.warn('[AI-GM Panel] Pack enumeration failed:', e);
+        }
+
+        // Fetch reference character status
+        let referenceCharacter: any = null;
+        try {
+            const refRes = await fetch(`${API}/gm/character/reference/${encodeURIComponent(game.system.id)}/${encodeURIComponent(this.selectedActorType)}`);
+            if (refRes.ok) {
+                const refData = await refRes.json();
+                referenceCharacter = {
+                    label: refData.label,
+                    actorType: refData.actorType,
+                    itemCount: refData.items?.length ?? 0,
+                    capturedAt: refData.capturedAt ? new Date(refData.capturedAt).toLocaleString() : null,
+                };
+            }
+        } catch (_e) { /* server unreachable – that's fine */ }
 
         return {
             // Characters tab
@@ -91,12 +128,7 @@ export class AIGameMasterPanel extends Application {
             fieldTreeHTML: FieldTreeBuilder.buildTree(this.actorFields, this.selectedFields),
 
             // Items tab
-            itemPacks: game.packs
-                .filter((p: any) => p.documentName === 'Item')
-                .map((p: any) => ({
-                    id: p.collection,
-                    label: p.metadata.label ?? `${p.metadata.packageName}.${p.metadata.name}`
-                })),
+            itemPacks,
 
             // Library tab
             books: this.books,
@@ -105,14 +137,15 @@ export class AIGameMasterPanel extends Application {
             chatHistory: this.chatHistory,
 
             // System tab
-            systemId: game.system.id,
-            systemTitle: game.system.title,
-            foundryVersion: game.version,
+            systemId: game.system?.id ?? 'unknown',
+            systemTitle: game.system?.title ?? 'Unknown System',
+            foundryVersion: game.version ?? '',
             actorTypeNames: actorTypes,
             itemTypeNames: itemTypes,
             profile: game.aiGM?.snapshotSender?.getCachedProfile() ?? null,
             wsConnected: game.aiGM?.wsClient?.isConnected() ?? false,
-            serverUrl: API
+            serverUrl: API,
+            referenceCharacter
         };
     }
 
@@ -173,6 +206,7 @@ export class AIGameMasterPanel extends Application {
         // ── System tab ──
         html.find('[data-action="relearn-system"]').on('click', this._onRelearnSystem.bind(this));
         html.find('[data-action="reconnect-ws"]').on('click', this._onReconnectWS.bind(this));
+        html.find('[data-action="clear-reference"]').on('click', this._onClearReference.bind(this));
 
         // Dynamic result-card buttons (delegated)
         html.find('#char-result').on('click', '[data-action="create-character"]', this._onCreateCharacter.bind(this));
@@ -308,18 +342,337 @@ export class AIGameMasterPanel extends Application {
     private async _onCreateCharacter(): Promise<void> {
         if (!this.characterData) return ui.notifications.warn('Generate a character first.');
         try {
-            const actor = await Actor.create(this.characterData.actor);
-            if (!actor) throw new Error('Actor creation failed');
-            if (this.characterData.items?.length) {
-                await actor.createEmbeddedDocuments('Item', this.characterData.items);
+            const actorData = this.characterData.actor;
+            const aiSystemData = actorData.system ?? {};
+
+            // ── Defensive: ensure required fields are present ──
+            const actorName = actorData.name
+                || (aiSystemData as any).nombre
+                || (aiSystemData as any).nom
+                || (aiSystemData as any).concept
+                || 'AI Character';
+            const actorType = actorData.type || this.selectedActorType || 'character';
+
+            if (!actorData.name) {
+                console.warn('[AI-GM] Actor name was undefined, using fallback:', actorName,
+                    'Keys in actor:', Object.keys(actorData),
+                    'Keys in system:', Object.keys(aiSystemData));
             }
-            ui.notifications.info(`Created: ${actor.name}`);
-            actor.sheet.render(true);
+
+            // Fetch reference character (if stored) for structural guidance
+            const refChar = await this._fetchReferenceCharacter();
+            if (refChar) {
+                console.log(`[AI-GM] Using reference character "${refChar.label}" for structural guidance`);
+            }
+
+            // ── Phase 1: Create a minimal actor so the system adds its defaults ──
+            // (Many systems auto-create skill/feature Items only when no system data is given)
+            const minimalActor = await Actor.create({
+                name: actorName,
+                type: actorType,
+                img: actorData.img || 'icons/svg/mystery-man.svg'
+            });
+            if (!minimalActor) throw new Error('Actor creation failed');
+
+            const defaultItemCount = minimalActor.items.size;
+            console.log(`[AI-GM] Minimal actor created with ${defaultItemCount} default items`);
+            if (defaultItemCount > 0) {
+                const itemNames = Array.from(minimalActor.items).map((i: any) => `${i.type}:${i.name}`);
+                console.log(`[AI-GM] Default items: ${itemNames.join(', ')}`);
+            }
+
+            // ── Phase 2: Update the actor with the AI-generated system data ──
+            if (Object.keys(aiSystemData).length > 0) {
+                await minimalActor.update({ system: aiSystemData });
+                console.log('[AI-GM] Actor updated with AI system data');
+            }
+
+            // ── Phase 3: Sync AI skill values to embedded Items ──
+            // Uses reference character items as a structural guide when available
+            if (minimalActor.items.size > 0) {
+                await this._syncAISkillsToItems(minimalActor, aiSystemData, refChar);
+            }
+
+            // ── Phase 4: Add AI-generated equipment/other items ──
+            // Use reference character item structures to fix AI-generated items if needed
+            if (this.characterData.items?.length) {
+                const fixedItems = refChar
+                    ? this._alignItemsToReference(this.characterData.items, refChar.items ?? [])
+                    : this.characterData.items;
+                await minimalActor.createEmbeddedDocuments('Item', fixedItems);
+            }
+
+            ui.notifications.info(`Created: ${minimalActor.name}`);
+            minimalActor.sheet.render(true);
             this.characterData = null;
             this.render(false);
         } catch (e: any) {
+            console.error('[AI-GM] Create character failed:', e);
             ui.notifications.error(`Create failed: ${e.message}`);
         }
+    }
+
+
+    /**
+     * After creation, sync AI-generated numeric skill values from the raw AI
+     * system data to the corresponding embedded Item documents.
+     *
+     * When a reference character is available, uses its items to determine
+     * the exact `system.*` field paths that hold skill values (instead of
+     * guessing with heuristics).
+     *
+     * @param actor  The created Foundry Actor (with embedded Items from system defaults)
+     * @param aiSystemData  The raw AI-generated system object (plain JS, not a Foundry proxy)
+     * @param refChar  Optional reference character for structural guidance
+     */
+    private async _syncAISkillsToItems(actor: any, aiSystemData: Record<string, any>, refChar?: any): Promise<void> {
+        if (!actor.items.size) return;
+
+        // ── Strategy 1: Reference-based exact mapping ──
+        // If we have a reference character, build a precise mapping from item name → system field paths
+        if (refChar?.items?.length) {
+            const updates = this._buildReferenceBasedUpdates(actor, aiSystemData, refChar.items);
+            if (updates.length > 0) {
+                console.log(`[AI-GM] Reference-based sync: ${updates.length} items matched`);
+                await actor.updateEmbeddedDocuments('Item', updates);
+                return;
+            }
+            console.log('[AI-GM] Reference-based sync found no matches, falling back to heuristic');
+        }
+
+        // ── Strategy 2: Heuristic fallback (original approach) ──
+        // Collect candidate skill maps from the RAW AI data (not actor.system which is a proxy)
+        const candidateMaps = this._collectSkillDataMaps(aiSystemData);
+        if (candidateMaps.length === 0) {
+            console.log('[AI-GM] No skill data maps found in AI system data');
+            return;
+        }
+        console.log(`[AI-GM] Found ${candidateMaps.length} candidate skill maps: ${candidateMaps.map(m => m.path).join(', ')}`);
+
+        const updates: any[] = [];
+
+        for (const item of actor.items) {
+            for (const { map, path } of candidateMaps) {
+                const matchKey = this._fuzzyMatchItemToKey(item, Object.keys(map));
+                if (matchKey === null) continue;
+
+                const aiValue = map[matchKey];
+                if (typeof aiValue === 'number') {
+                    updates.push({ _id: item.id, 'system.value': aiValue });
+                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey} = ${aiValue}`);
+                } else if (typeof aiValue === 'object' && aiValue !== null && 'value' in aiValue) {
+                    updates.push({ _id: item.id, 'system.value': aiValue.value });
+                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey}.value = ${aiValue.value}`);
+                }
+                break; // matched – no need to check other maps
+            }
+        }
+
+        if (updates.length > 0) {
+            console.log(`[AI-GM] Heuristic sync: ${updates.length} AI skill values → embedded Items`);
+            await actor.updateEmbeddedDocuments('Item', updates);
+        } else {
+            console.log('[AI-GM] No skill items could be matched to AI data');
+        }
+    }
+
+    /**
+     * Build item updates by comparing actor's embedded items against the reference
+     * character's items. For each embedded item that matches a reference item by
+     * name/type, copy over the numeric system fields from the AI-generated data
+     * using the reference item's field structure as a guide.
+     */
+    private _buildReferenceBasedUpdates(
+        actor: any,
+        aiSystemData: Record<string, any>,
+        refItems: Array<Record<string, any>>
+    ): any[] {
+        const updates: any[] = [];
+
+        // Build a lookup: normalizedName → reference item
+        const norm = (s: string): string =>
+            s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+
+        const refLookup = new Map<string, Record<string, any>>();
+        for (const refItem of refItems) {
+            const name = refItem.name || '';
+            refLookup.set(norm(name), refItem);
+        }
+
+        // Collect skill-like maps from AI data (for value lookup)
+        const skillMaps = this._collectSkillDataMaps(aiSystemData);
+
+        for (const item of actor.items) {
+            const itemNorm = norm(item.name || '');
+            const refItem = refLookup.get(itemNorm);
+            if (!refItem) continue;
+
+            // Inspect reference item's system data to find numeric field paths
+            const refSystem = refItem.system;
+            if (!refSystem || typeof refSystem !== 'object') continue;
+
+            const update: Record<string, any> = { _id: item.id };
+            let hasUpdate = false;
+
+            // Walk reference item system fields and fill from AI data
+            for (const [field, refValue] of Object.entries(refSystem)) {
+                if (typeof refValue === 'number') {
+                    // Try to find AI value for this item/skill
+                    const aiVal = this._findAIValueForItem(item, field, skillMaps, aiSystemData);
+                    if (aiVal !== null) {
+                        update[`system.${field}`] = aiVal;
+                        hasUpdate = true;
+                        console.log(`[AI-GM]   Ref match: "${item.name}".system.${field} = ${aiVal}`);
+                    }
+                } else if (typeof refValue === 'object' && refValue !== null && 'value' in refValue && typeof refValue.value === 'number') {
+                    const aiVal = this._findAIValueForItem(item, field, skillMaps, aiSystemData);
+                    if (aiVal !== null) {
+                        update[`system.${field}.value`] = aiVal;
+                        hasUpdate = true;
+                        console.log(`[AI-GM]   Ref match: "${item.name}".system.${field}.value = ${aiVal}`);
+                    }
+                }
+            }
+
+            if (hasUpdate) updates.push(update);
+        }
+
+        return updates;
+    }
+
+    /**
+     * Try to find the AI-generated value for a specific item/skill.
+     * Searches through skill maps and direct AI system data.
+     */
+    private _findAIValueForItem(
+        item: any,
+        _field: string,
+        skillMaps: Array<{ path: string; map: Record<string, any> }>,
+        _aiSystemData: Record<string, any>
+    ): number | null {
+        // Try to match item name to a key in any skill map
+        for (const { map } of skillMaps) {
+            const matchKey = this._fuzzyMatchItemToKey(item, Object.keys(map));
+            if (matchKey !== null) {
+                const val = map[matchKey];
+                if (typeof val === 'number') return val;
+                if (typeof val === 'object' && val !== null && 'value' in val && typeof val.value === 'number') {
+                    return val.value;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Align AI-generated items to reference character item structures.
+     * For each AI item, if a reference item of the same type exists, merge
+     * the reference's system structure as defaults (keeping AI's values on top).
+     */
+    private _alignItemsToReference(
+        aiItems: Array<Record<string, any>>,
+        refItems: Array<Record<string, any>>
+    ): Array<Record<string, any>> {
+        // Build type → first reference item lookup
+        const refByType = new Map<string, Record<string, any>>();
+        for (const ri of refItems) {
+            const type = ri.type;
+            if (type && !refByType.has(type)) refByType.set(type, ri);
+        }
+
+        return aiItems.map(aiItem => {
+            const refTemplate = refByType.get(aiItem.type);
+            if (!refTemplate) return aiItem;
+
+            // Deep merge: reference system as base, AI system on top
+            const mergedSystem = this._deepMerge(
+                JSON.parse(JSON.stringify(refTemplate.system || {})),
+                aiItem.system || {}
+            );
+
+            return { ...aiItem, system: mergedSystem };
+        });
+    }
+
+    /**
+     * Simple deep merge: target gets overwritten by source values.
+     */
+    private _deepMerge(target: any, source: any): any {
+        if (!source || typeof source !== 'object') return source;
+        if (!target || typeof target !== 'object') return source;
+        const result = { ...target };
+        for (const [key, val] of Object.entries(source)) {
+            if (val && typeof val === 'object' && !Array.isArray(val) && typeof result[key] === 'object') {
+                result[key] = this._deepMerge(result[key], val);
+            } else {
+                result[key] = val;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Walk the actor system data and collect any object that looks like
+     * a skill/ability map (object with string keys → number values).
+     */
+    private _collectSkillDataMaps(system: any, path: string = ''): Array<{ path: string; map: Record<string, any> }> {
+        const results: Array<{ path: string; map: Record<string, any> }> = [];
+        if (!system || typeof system !== 'object') return results;
+
+        // Known common keys that hold skill/ability maps
+        const likelyCandidates = ['habilidades', 'skills', 'abilities', 'competences',
+            'competencias', 'habilitats', 'pericias', 'capacidades'];
+
+        for (const [key, value] of Object.entries(system)) {
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                const fullPath = path ? `${path}.${key}` : key;
+                // Check if this object looks like a skill map
+                const entries = Object.entries(value as Record<string, any>);
+                const numericCount = entries.filter(([, v]) =>
+                    typeof v === 'number' || (typeof v === 'object' && v && 'value' in v)
+                ).length;
+
+                if (entries.length > 2 && numericCount >= entries.length * 0.6) {
+                    results.push({ path: fullPath, map: value as Record<string, any> });
+                }
+
+                // Also check if it matches a known candidate name
+                if (likelyCandidates.includes(key.toLowerCase()) && entries.length > 0) {
+                    if (!results.find(r => r.path === fullPath)) {
+                        results.push({ path: fullPath, map: value as Record<string, any> });
+                    }
+                }
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * Fuzzy-match a Foundry Item to a key in the AI's skill data.
+     * Normalizes accents, whitespace, dots, and common prefixes.
+     */
+    private _fuzzyMatchItemToKey(item: any, keys: string[]): string | null {
+        const norm = (s: string): string =>
+            s.toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // strip accents
+                .replace(/[^a-z0-9]/g, '');                        // strip non-alphanumeric
+
+        const itemName = norm(item.name || '');
+        // Also try the item's internal identifier if available
+        const itemId = norm(item.system?.identifier || item.flags?.core?.sourceId || '');
+
+        for (const key of keys) {
+            const nk = norm(key);
+            if (!nk) continue;
+            // Exact normalized match
+            if (nk === itemName || nk === itemId) return key;
+            // Substring match (e.g. item "F. Física" → "ffisica")
+            if (itemName.includes(nk) || nk.includes(itemName)) return key;
+            if (itemId && (itemId.includes(nk) || nk.includes(itemId))) return key;
+        }
+
+        return null;
     }
 
     private _onExportJSON(): void {
@@ -618,6 +971,36 @@ export class AIGameMasterPanel extends Application {
         } catch (e: any) {
             ui.notifications.error(`Relearn failed: ${e.message}`);
         }
+    }
+
+    private async _onClearReference(): Promise<void> {
+        const systemId = game.system?.id;
+        if (!systemId) return;
+        try {
+            const res = await fetch(
+                `${API}/gm/character/reference/${encodeURIComponent(systemId)}/${encodeURIComponent(this.selectedActorType)}`,
+                { method: 'DELETE' }
+            );
+            if (!res.ok) throw new Error(`Server ${res.status}`);
+            ui.notifications.info('Reference character cleared.');
+            this.render(false);
+        } catch (e: any) {
+            ui.notifications.error(`Clear failed: ${e.message}`);
+        }
+    }
+
+    /**
+     * Fetch the reference character for the current system + actor type.
+     * Returns null if none is stored.
+     */
+    private async _fetchReferenceCharacter(): Promise<any | null> {
+        try {
+            const res = await fetch(
+                `${API}/gm/character/reference/${encodeURIComponent(game.system.id)}/${encodeURIComponent(this.selectedActorType)}`
+            );
+            if (res.ok) return await res.json();
+        } catch (_) { /* server unreachable */ }
+        return null;
     }
 
     private async _onReconnectWS(): Promise<void> {
