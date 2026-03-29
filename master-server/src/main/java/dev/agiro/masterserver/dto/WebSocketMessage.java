@@ -62,6 +62,9 @@ public class WebSocketMessage {
         INGESTION_COMPLETED,
         INGESTION_FAILED,
 
+        // Transcription events
+        TRANSCRIPTION_COMPLETED,
+
         // Generic notifications
         NOTIFICATION,
         ERROR,

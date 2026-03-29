@@ -5,6 +5,7 @@ import dev.agiro.masterserver.dto.ItemGenerationRequest;
 import dev.agiro.masterserver.dto.ItemGenerationResponse;
 import dev.agiro.masterserver.dto.WebSocketMessage;
 import dev.agiro.masterserver.service.ItemGenerationService;
+import dev.agiro.masterserver.service.TranscriptionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -22,13 +23,16 @@ public class WebSocketController {
     private final SimpMessagingTemplate messagingTemplate;
     private final ItemGenerationService itemGenerationService;
     private final ObjectMapper objectMapper;
+    private final TranscriptionService transcriptionService;
 
     public WebSocketController(SimpMessagingTemplate messagingTemplate,
                                ItemGenerationService itemGenerationService,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               TranscriptionService transcriptionService) {
         this.messagingTemplate = messagingTemplate;
         this.itemGenerationService = itemGenerationService;
         this.objectMapper = objectMapper;
+        this.transcriptionService = transcriptionService;
     }
 
     /**
@@ -85,6 +89,22 @@ public class WebSocketController {
             );
             sendItemUpdate(request.getSessionId(), error);
         }
+    }
+
+    /**
+     * Handle audio transcription requests
+     */
+    @MessageMapping("/audio/transcribe")
+    public void handleAudioTranscription(@Payload WebSocketMessage message) {
+        log.info("Audio transcription request received: {}", message.getSessionId());
+        byte[] audioData = (byte[]) message.getPayload();
+        String transcription = transcriptionService.transcribeAudio(audioData);
+        WebSocketMessage response = WebSocketMessage.success(
+                WebSocketMessage.MessageType.TRANSCRIPTION_COMPLETED,
+                message.getSessionId(),
+                transcription
+        );
+        sendToSession(message.getSessionId(), response);
     }
 
     /**

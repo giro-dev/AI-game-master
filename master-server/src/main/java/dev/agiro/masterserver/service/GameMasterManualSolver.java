@@ -2,7 +2,9 @@ package dev.agiro.masterserver.service;
 
 import dev.agiro.masterserver.config.GameMasterConfig;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.SystemPromptTemplate;
@@ -20,17 +22,23 @@ public class GameMasterManualSolver {
     private final VectorStore vectorStore;
     private final ChatClient chatClient;
     private final GameMasterConfig config;
+    private final ChatMemory chatMemory;
 
-    public GameMasterManualSolver(VectorStore vectorStore, ChatClient.Builder builder, GameMasterConfig config) {
+    public GameMasterManualSolver(VectorStore vectorStore, ChatClient.Builder builder, GameMasterConfig config, ChatMemory chatMemory) {
         this.vectorStore = vectorStore;
         this.chatClient = builder.defaultOptions(ChatOptions.builder()
                         .model(config.getChat().getDefaultModel())
                         .temperature(0.7)
                         .build()).build();
         this.config = config;
+        this.chatMemory = chatMemory;
     }
 
     public String solveDoubt(String query, String gameSystem){
+        return solveDoubt(query, gameSystem, null);
+    }
+
+    public String solveDoubt(String query, String gameSystem, String conversationId){
         QuestionAnswerAdvisor answerAdvisor = QuestionAnswerAdvisor.builder(vectorStore)
                 .searchRequest(SearchRequest.builder()
                         .similarityThreshold(0.4d)
@@ -39,10 +47,16 @@ public class GameMasterManualSolver {
                         .build())
 
                 .build();
+
+        String convId = conversationId != null ? conversationId : "manual-" + gameSystem;
+        MessageChatMemoryAdvisor memoryAdvisor = MessageChatMemoryAdvisor.builder(chatMemory)
+                .conversationId(convId)
+                .build();
+
         SystemPromptTemplate systemPromptTemplate = new SystemPromptTemplate(systemResource);
         systemPromptTemplate.add("language",config.getChat().getDefaultLanguage());
         ChatResponse response = chatClient.prompt()
-                .advisors(answerAdvisor)
+                .advisors(answerAdvisor, memoryAdvisor)
                 .system(systemPromptTemplate.render())
                 .user(u -> u.text("{query}").param("query", query))
                 .call()

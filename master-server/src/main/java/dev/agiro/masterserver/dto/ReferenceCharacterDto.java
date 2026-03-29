@@ -1,10 +1,16 @@
 package dev.agiro.masterserver.dto;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +37,24 @@ public class ReferenceCharacterDto {
     /** All embedded items (actor.items.map(i => i.toObject())) */
     private List<Map<String, Object>> items;
 
-    private Instant capturedAt;
+    @JsonDeserialize(using = FlexibleTimestampDeserializer.class)
+    private Long capturedAt;
+
+    /** Handles both legacy ISO-8601 Instant strings and epoch-millis longs. */
+    public static class FlexibleTimestampDeserializer extends JsonDeserializer<Long> {
+        @Override
+        public Long deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+            if (p.currentToken() == JsonToken.VALUE_NUMBER_INT) {
+                return p.getLongValue();
+            } else if (p.currentToken() == JsonToken.VALUE_STRING) {
+                try {
+                    return Instant.parse(p.getValueAsString()).toEpochMilli();
+                } catch (Exception e) {
+                    return System.currentTimeMillis();
+                }
+            }
+            return null;
+        }
+    }
 }
 

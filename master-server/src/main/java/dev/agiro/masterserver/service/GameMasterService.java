@@ -4,7 +4,9 @@ import dev.agiro.masterserver.dto.AbilityDto;
 import dev.agiro.masterserver.dto.GameMasterRequest;
 import dev.agiro.masterserver.dto.GameMasterResponse;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -21,6 +23,7 @@ public class GameMasterService {
 
     private final ChatClient chatClient;
     private final VectorStore vectorStore;
+    private final ChatMemory chatMemory;
 
     @Value("classpath:/prompts/session_assistant_system.txt")
     private Resource systemPromptResource;
@@ -39,13 +42,14 @@ public class GameMasterService {
                 Analyze the user's intent and respond with the appropriate JSON.
                 """;
 
-    public GameMasterService(ChatClient.Builder chatClientBuilder, VectorStore vectorStore) {
+    public GameMasterService(ChatClient.Builder chatClientBuilder, VectorStore vectorStore, ChatMemory chatMemory) {
             this.chatClient = chatClientBuilder.defaultOptions(ChatOptions.builder()
                     .model("gpt-4.1-mini")
                     .temperature(0.7)
                     .build())
                     .build();
         this.vectorStore = vectorStore;
+        this.chatMemory = chatMemory;
     }
 
     public GameMasterResponse processRequest(GameMasterRequest request) {
@@ -57,11 +61,20 @@ public class GameMasterService {
             filter = b.and(filter, b.eq("world_id", request.getWorldId()));
         }
 
-        QuestionAnswerAdvisor advisor = QuestionAnswerAdvisor.builder(vectorStore)
+        QuestionAnswerAdvisor ragAdvisor = QuestionAnswerAdvisor.builder(vectorStore)
                 .searchRequest(SearchRequest.builder()
                         .topK(6)
                         .filterExpression(filter.build())
                         .build())
+                .build();
+
+        // Chat memory advisor — keeps last 20 messages per conversation
+        String conversationId = request.getConversationId() != null
+                ? request.getConversationId()
+                : request.getWorldId() != null ? request.getWorldId() : "default";
+
+        MessageChatMemoryAdvisor memoryAdvisor = MessageChatMemoryAdvisor.builder(chatMemory)
+                .conversationId(conversationId)
                 .build();
 
         Map<String, Object> userPromptParameters = Map.of(
@@ -74,7 +87,7 @@ public class GameMasterService {
         GameMasterResponse aiResponse = chatClient.prompt()
                 .system(system -> system.text(systemPromptResource)
                         .param("language", "Català"))
-                .advisors(advisor)
+                .advisors(ragAdvisor, memoryAdvisor)
                 .user(user -> user.text(USER_MESSAGE_TEMPLATE)
                         .params(userPromptParameters))
                 .call()

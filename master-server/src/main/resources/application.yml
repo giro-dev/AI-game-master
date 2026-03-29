@@ -8,8 +8,23 @@ spring:
       lifecycle-management: start-only
       file: docker-compose.yml
 
+  datasource:
+    url: jdbc:postgresql://localhost:5432/gamemaster
+    username: gamemaster
+    password: gamemaster
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
   # Google Gemini AI Configuration
   ai:
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: always
     openai:
       api-key: ${OPENAI_API_KEY}
       embedding:

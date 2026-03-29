@@ -142,7 +142,7 @@ export class AIGameMasterPanel extends Application {
             foundryVersion: game.version ?? '',
             actorTypeNames: actorTypes,
             itemTypeNames: itemTypes,
-            profile: game.aiGM?.snapshotSender?.getCachedProfile() ?? null,
+            profile: (await game.aiGM?.snapshotSender?.getProfile()) ?? null,
             wsConnected: game.aiGM?.wsClient?.isConnected() ?? false,
             serverUrl: API,
             referenceCharacter
@@ -229,6 +229,59 @@ export class AIGameMasterPanel extends Application {
         }
     }
 
+    private _normalizeKey(s: string): string {
+        return (s || '')
+            .toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    private _findExistingEmbeddedItem(actor: any, itemData: Record<string, any>): any | null {
+        const type = itemData?.type;
+        if (!type) return null;
+
+        const candidates: any[] = (Array.from(actor.items ?? []) as any[]).filter((i: any) => i?.type === type);
+        if (candidates.length === 0) return null;
+
+        const aiName = this._normalizeKey(itemData?.name ?? '');
+        const aiIdentifier = this._normalizeKey(itemData?.system?.identifier ?? itemData?.flags?.core?.sourceId ?? '');
+
+        for (const c of candidates as any[]) {
+            const candName = this._normalizeKey(c?.name ?? '');
+            const candIdentifier = this._normalizeKey(c?.system?.identifier ?? c?.flags?.core?.sourceId ?? '');
+
+            if (aiName && (aiName === candName || aiName.includes(candName) || candName.includes(aiName))) return c;
+            if (aiIdentifier && (aiIdentifier === candIdentifier || aiIdentifier.includes(candIdentifier) || candIdentifier.includes(aiIdentifier))) return c;
+        }
+
+        return null;
+    }
+
+    private async _upsertGeneratedItems(actor: any, items: Array<Record<string, any>>): Promise<void> {
+        const updates: any[] = [];
+        const creates: any[] = [];
+
+        for (const item of items) {
+            const existing = this._findExistingEmbeddedItem(actor, item);
+            if (existing) {
+                const update: Record<string, any> = { _id: existing.id };
+                if (item.name) update.name = item.name;
+                if (item.img) update.img = item.img;
+                if (item.system) update.system = item.system;
+                updates.push(update);
+            } else {
+                creates.push(item);
+            }
+        }
+
+        if (updates.length > 0) {
+            await actor.updateEmbeddedDocuments('Item', updates);
+        }
+        if (creates.length > 0) {
+            await actor.createEmbeddedDocuments('Item', creates);
+        }
+    }
+
     private _onActorTypeChange(ev: any): void {
         this.selectedActorType = ev.currentTarget.value;
         try {
@@ -278,6 +331,13 @@ export class AIGameMasterPanel extends Application {
             const selectedArr = Array.from(this.selectedFields);
             let blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(this.selectedActorType, selectedArr);
 
+            try {
+                const itemTypes = (blueprint as any)?.availableItems?.map((i: any) => i?.type).filter(Boolean) ?? [];
+                console.log(`[AI-GM] Blueprint availableItems: ${itemTypes.length}`, itemTypes);
+            } catch (_e) {
+                console.log('[AI-GM] Blueprint availableItems: <unavailable>');
+            }
+
             // Enhance with profile
             if (game.aiGM.postProcessor) blueprint = game.aiGM.postProcessor.enhanceBlueprint(blueprint);
 
@@ -291,7 +351,26 @@ export class AIGameMasterPanel extends Application {
             });
             const charData = await this._charService.generateCharacter(request);
 
+            try {
+                const returnedTypes = (charData as any)?.items?.map((i: any) => i?.type).filter(Boolean) ?? [];
+                console.log(`[AI-GM] Backend returned items: ${returnedTypes.length}`, returnedTypes);
+            } catch (_e) {
+                console.log('[AI-GM] Backend returned items: <unavailable>');
+            }
+
             this.characterData = CharacterDataSanitizer.sanitize(charData);
+
+            // Diagnostic: check if habilidades/atributos survived sanitization
+            const sysKeys = Object.keys(this.characterData?.actor?.system ?? {});
+            console.log('[AI-GM] Post-sanitize system keys:', sysKeys);
+            if (this.characterData?.actor?.system?.habilidades) {
+                const habKeys = Object.keys(this.characterData.actor.system.habilidades);
+                const habSample = habKeys.slice(0, 3).map(k => `${k}=${JSON.stringify(this.characterData!.actor.system.habilidades[k]?.value)}`);
+                console.log(`[AI-GM] Post-sanitize habilidades: ${habKeys.length} keys, sample: ${habSample.join(', ')}`);
+            } else {
+                console.warn('[AI-GM] No habilidades in post-sanitize system data');
+            }
+
             this.validationErrors = [];
 
             // Validate
@@ -382,9 +461,47 @@ export class AIGameMasterPanel extends Application {
             }
 
             // ── Phase 2: Update the actor with the AI-generated system data ──
+            // Use dot-notation paths for maximum compatibility with template-based systems
             if (Object.keys(aiSystemData).length > 0) {
-                await minimalActor.update({ system: aiSystemData });
-                console.log('[AI-GM] Actor updated with AI system data');
+                console.log('[AI-GM] aiSystemData top-level keys:', Object.keys(aiSystemData));
+                if ((aiSystemData as any).habilidades) {
+                    console.log('[AI-GM] habilidades in aiSystemData:', JSON.stringify((aiSystemData as any).habilidades));
+                }
+                if ((aiSystemData as any).atributos) {
+                    console.log('[AI-GM] atributos in aiSystemData:', JSON.stringify((aiSystemData as any).atributos));
+                }
+
+                // Flatten nested AI system data into dot-notation paths for reliable updates.
+                // Use the actor's existing system as a structural template: if the AI returns
+                // a flat primitive (e.g. habilidades.interaccion = 8) but the actor expects
+                // an object with a .value sub-field, route the update to .value automatically.
+                const existingSystem = (minimalActor as any).system ?? {};
+                const flatUpdate: Record<string, any> = {};
+                this._flattenStructureAware(aiSystemData, 'system', flatUpdate, existingSystem);
+                console.log(`[AI-GM] Flattened update: ${Object.keys(flatUpdate).length} paths`);
+                const samplePaths = Object.keys(flatUpdate).slice(0, 15);
+                console.log('[AI-GM] Sample update paths:', samplePaths.map(p => `${p}=${flatUpdate[p]}`).join(', '));
+
+                await minimalActor.update(flatUpdate);
+                console.log('[AI-GM] Actor updated with AI system data (dot-notation)');
+
+                // Verify critical fields after update
+                const postHab = (minimalActor as any).system?.habilidades;
+                if (postHab) {
+                    const vals = Object.entries(postHab)
+                        .filter(([, v]: [string, any]) => v && typeof v === 'object' && 'value' in v)
+                        .map(([k, v]: [string, any]) => `${k}=${v.value}`)
+                        .join(', ');
+                    console.log(`[AI-GM] Post-update habilidades: ${vals}`);
+                }
+                const postAttr = (minimalActor as any).system?.atributos;
+                if (postAttr) {
+                    const vals = Object.entries(postAttr)
+                        .filter(([, v]: [string, any]) => v && typeof v === 'object' && 'value' in v)
+                        .map(([k, v]: [string, any]) => `${k}=${v.value}`)
+                        .join(', ');
+                    console.log(`[AI-GM] Post-update atributos: ${vals}`);
+                }
             }
 
             // ── Phase 3: Sync AI skill values to embedded Items ──
@@ -399,7 +516,7 @@ export class AIGameMasterPanel extends Application {
                 const fixedItems = refChar
                     ? this._alignItemsToReference(this.characterData.items, refChar.items ?? [])
                     : this.characterData.items;
-                await minimalActor.createEmbeddedDocuments('Item', fixedItems);
+                await this._upsertGeneratedItems(minimalActor, fixedItems);
             }
 
             ui.notifications.info(`Created: ${minimalActor.name}`);
@@ -675,6 +792,41 @@ export class AIGameMasterPanel extends Application {
         return null;
     }
 
+    /**
+     * Structure-aware flatten: converts nested AI data into dot-notation paths,
+     * using the actor's existing system data as a structural template.
+     *
+     * Key behavior: when the AI returns a flat primitive (e.g. habilidades.combate = 5)
+     * but the actor's template expects a nested object with a `value` sub-field
+     * (e.g. {label, value, min, max, ...}), this method routes the update to
+     * `.value` instead of replacing the entire object.
+     */
+    private _flattenStructureAware(
+        obj: Record<string, any>,
+        prefix: string,
+        result: Record<string, any>,
+        template: any
+    ): void {
+        for (const [key, value] of Object.entries(obj)) {
+            const path = prefix ? `${prefix}.${key}` : key;
+            const tplValue = template?.[key];
+
+            if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+                // AI returned a nested object → recurse into it
+                this._flattenStructureAware(value, path, result, tplValue ?? {});
+            } else if (
+                // AI returned a primitive, but the template expects an object with .value
+                (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') &&
+                tplValue && typeof tplValue === 'object' && !Array.isArray(tplValue) && 'value' in tplValue
+            ) {
+                result[`${path}.value`] = value;
+                console.log(`[AI-GM] Structure fix: ${path} → ${path}.value = ${value}`);
+            } else {
+                result[path] = value;
+            }
+        }
+    }
+
     private _onExportJSON(): void {
         if (!this.characterData) return;
         navigator.clipboard.writeText(JSON.stringify(this.characterData, null, 2));
@@ -823,6 +975,7 @@ export class AIGameMasterPanel extends Application {
             tokenName: token?.name ?? null,
             worldId: game.world.id,
             foundrySystem: game.system.id,
+            conversationId: `${game.world.id}-session`,
             abilities: token ? this._collectTokenAbilities(token) : [],
             worldState: this._collectWorldState()
         };

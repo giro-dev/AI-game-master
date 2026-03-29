@@ -1,4 +1,17 @@
 services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: gamemaster
+      POSTGRES_USER: gamemaster
+      POSTGRES_PASSWORD: gamemaster
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    labels:
+      org.springframework.boot.service-connection: postgres
+
   opensearch:
     image: opensearchproject/opensearch:2.19.1
     environment:
@@ -24,4 +37,5 @@ services:
       - opensearch
 
 volumes:
+  postgres-data:
   opensearch-data:

@@ -315,6 +315,66 @@ public class SystemAwarePromptBuilder {
     }
 
     /**
+     * Build a prompt section that explicitly mandates character-definition items (CDIs).
+     * <p>
+     * In systems like Hitos, skills (habilidad), traits (rasgo) and powers (poder) are
+     * embedded Foundry items — not actor fields and not optional equipment. They MUST
+     * be generated for every character of that type.
+     * <p>
+     * This method groups reference items by type, counts them, and builds a prompt block
+     * that tells the AI exactly how many items of each type to produce and what the
+     * field structure looks like.
+     *
+     * @param ref           The stored reference character
+     * @param requiredTypes The item types extracted from the reference (all unique types)
+     * @return prompt context block with mandatory item instructions
+     */
+    public String buildRequiredItemTypesContext(ReferenceCharacterDto ref, List<String> requiredTypes) {
+        if (ref == null || ref.getItems() == null || requiredTypes.isEmpty()) return "";
+
+        // Group reference items by type (preserve insertion order)
+        Map<String, List<Map<String, Object>>> itemsByType = new LinkedHashMap<>();
+        for (Map<String, Object> item : ref.getItems()) {
+            String type = (String) item.get("type");
+            if (type != null && requiredTypes.contains(type)) {
+                itemsByType.computeIfAbsent(type, k -> new ArrayList<>()).add(item);
+            }
+        }
+
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("=== REQUIRED CHARACTER ITEMS (from reference character '")
+                .append(ref.getLabel()).append("') ===\n");
+        ctx.append("These item types are MANDATORY for every character of this type in this system.\n");
+        ctx.append("You MUST generate ALL items listed below — do NOT skip any type.\n\n");
+
+        int totalRequired = 0;
+        for (String type : requiredTypes) {
+            List<Map<String, Object>> examples = itemsByType.getOrDefault(type, List.of());
+            int count = examples.isEmpty() ? 1 : examples.size();
+            totalRequired += count;
+
+            ctx.append("Type \"").append(type).append("\" — generate EXACTLY ").append(count)
+                    .append(" item(s)\n");
+
+            if (!examples.isEmpty()) {
+                ctx.append("  Structural example (use same field names and value types):\n");
+                try {
+                    String json = objectMapper.writeValueAsString(examples.get(0));
+                    if (json.length() > 1200) json = json.substring(0, 1200) + "... (truncated)";
+                    ctx.append("  ").append(json.replace("\n", "\n  ")).append("\n");
+                } catch (Exception e) {
+                    log.warn("Failed to serialize reference item for type '{}': {}", type, e.getMessage());
+                }
+            }
+            ctx.append("\n");
+        }
+
+        ctx.append("TOTAL items to generate for mandatory types: ").append(totalRequired).append("\n");
+        ctx.append("=== END REQUIRED CHARACTER ITEMS ===\n\n");
+        return ctx.toString();
+    }
+
+    /**
      * Build a compact structural summary of the reference character's items.
      * Shows available item types and their field structure without all the values.
      */

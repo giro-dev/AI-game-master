@@ -45,7 +45,7 @@ public class GameMasterController {
             if (request.getTokenId() == null || request.getTokenId().isBlank()) {
                 log.info("No token selected — routing to manual solver");
                 String gameSystem = request.getFoundrySystem() != null ? request.getFoundrySystem() : "unknown";
-                String answer = manualSolver.solveDoubt(request.getPrompt(), gameSystem);
+                String answer = manualSolver.solveDoubt(request.getPrompt(), gameSystem, request.getConversationId());
                 GameMasterResponse response = new GameMasterResponse();
                 response.setNarration(answer);
                 response.setActions(new ArrayList<>());

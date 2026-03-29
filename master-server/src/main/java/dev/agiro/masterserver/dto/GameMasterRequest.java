@@ -11,6 +11,7 @@ public class GameMasterRequest {
     private String tokenName;
     private String worldId;
     private String foundrySystem;
+    private String conversationId;
     private List<AbilityDto> abilities;
     private WorldStateDto worldState;
 

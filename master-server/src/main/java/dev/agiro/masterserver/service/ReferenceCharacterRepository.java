@@ -1,44 +1,44 @@
 package dev.agiro.masterserver.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.ReferenceCharacterDto;
+import dev.agiro.masterserver.entity.ReferenceCharacterEntity;
+import dev.agiro.masterserver.repository.ReferenceCharacterJpaRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.opensearch.client.opensearch.OpenSearchClient;
-import org.opensearch.client.opensearch._types.Refresh;
-import org.opensearch.client.opensearch.core.*;
-import org.opensearch.client.opensearch.indices.ExistsRequest;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Persists reference characters in OpenSearch with an in-memory read-through cache.
+ * Persists reference characters in PostgreSQL with an in-memory read-through cache.
  * <p>
- * Index: {@code reference-characters}
- * Document ID: {@code {systemId}:{actorType}}
+ * Table: {@code reference_characters}
+ * Primary key: {@code {systemId}:{actorType}}
  */
 @Slf4j
 @Repository
 public class ReferenceCharacterRepository {
 
-    private static final String INDEX = "reference-characters";
+    private final ReferenceCharacterJpaRepository jpaRepository;
+    private final ObjectMapper objectMapper;
 
-    private final OpenSearchClient openSearchClient;
-
-    /** Hot cache so reads never hit OpenSearch during generation. */
+    /** Hot cache so reads never hit the database during generation. */
     private final Map<String, ReferenceCharacterDto> cache = new ConcurrentHashMap<>();
 
-    public ReferenceCharacterRepository(OpenSearchClient openSearchClient) {
-        this.openSearchClient = openSearchClient;
+    public ReferenceCharacterRepository(ReferenceCharacterJpaRepository jpaRepository, ObjectMapper objectMapper) {
+        this.jpaRepository = jpaRepository;
+        this.objectMapper = objectMapper;
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────
 
     @PostConstruct
     void init() {
-        ensureIndex();
         warmCache();
     }
 
@@ -47,16 +47,12 @@ public class ReferenceCharacterRepository {
     public void save(ReferenceCharacterDto ref) {
         String id = docId(ref.getSystemId(), ref.getActorType());
         try {
-            openSearchClient.index(IndexRequest.of(i -> i
-                    .index(INDEX)
-                    .id(id)
-                    .document(ref)
-                    .refresh(Refresh.True)
-            ));
+            ReferenceCharacterEntity entity = toEntity(ref);
+            jpaRepository.save(entity);
             cache.put(id, ref);
-            log.info("Saved reference character '{}' → {} (index={})", ref.getLabel(), id, INDEX);
+            log.info("Saved reference character '{}' → {} to PostgreSQL", ref.getLabel(), id);
         } catch (Exception e) {
-            log.error("Failed to save reference character '{}' to OpenSearch: {}", id, e.getMessage(), e);
+            log.error("Failed to save reference character '{}' to PostgreSQL: {}", id, e.getMessage(), e);
             // Still keep in cache so the current session works
             cache.put(id, ref);
         }
@@ -69,18 +65,16 @@ public class ReferenceCharacterRepository {
         ReferenceCharacterDto cached = cache.get(id);
         if (cached != null) return Optional.of(cached);
 
-        // Cache miss → try OpenSearch
+        // Cache miss → try PostgreSQL
         try {
-            GetResponse<ReferenceCharacterDto> response = openSearchClient.get(
-                    GetRequest.of(g -> g.index(INDEX).id(id)),
-                    ReferenceCharacterDto.class
-            );
-            if (response.found() && response.source() != null) {
-                cache.put(id, response.source());
-                return Optional.of(response.source());
+            Optional<ReferenceCharacterEntity> entity = jpaRepository.findById(id);
+            if (entity.isPresent()) {
+                ReferenceCharacterDto dto = toDto(entity.get());
+                cache.put(id, dto);
+                return Optional.of(dto);
             }
         } catch (Exception e) {
-            log.warn("OpenSearch lookup failed for reference character '{}': {}", id, e.getMessage());
+            log.warn("PostgreSQL lookup failed for reference character '{}': {}", id, e.getMessage());
         }
         return Optional.empty();
     }
@@ -89,14 +83,10 @@ public class ReferenceCharacterRepository {
         String id = docId(systemId, actorType);
         cache.remove(id);
         try {
-            openSearchClient.delete(DeleteRequest.of(d -> d
-                    .index(INDEX)
-                    .id(id)
-                    .refresh(Refresh.True)
-            ));
-            log.info("Deleted reference character from OpenSearch: {}", id);
+            jpaRepository.deleteById(id);
+            log.info("Deleted reference character from PostgreSQL: {}", id);
         } catch (Exception e) {
-            log.warn("Failed to delete reference character '{}' from OpenSearch: {}", id, e.getMessage());
+            log.warn("Failed to delete reference character '{}' from PostgreSQL: {}", id, e.getMessage());
         }
     }
 
@@ -106,47 +96,58 @@ public class ReferenceCharacterRepository {
         return systemId + ":" + actorType;
     }
 
-    /**
-     * Create the index if it doesn't exist (no vector embeddings needed — plain JSON docs).
-     */
-    private void ensureIndex() {
+    /** On startup, load all reference characters into the in-memory cache. */
+    private void warmCache() {
         try {
-            boolean exists = openSearchClient.indices()
-                    .exists(ExistsRequest.of(e -> e.index(INDEX)))
-                    .value();
-            if (!exists) {
-                openSearchClient.indices().create(c -> c
-                        .index(INDEX)
-                        .settings(s -> s.numberOfShards("1").numberOfReplicas("0"))
-                );
-                log.info("Created OpenSearch index '{}'", INDEX);
+            var entities = jpaRepository.findAll();
+            int loaded = 0;
+            for (var entity : entities) {
+                try {
+                    ReferenceCharacterDto dto = toDto(entity);
+                    cache.put(entity.getId(), dto);
+                    loaded++;
+                } catch (Exception e) {
+                    log.warn("Failed to deserialize reference character '{}': {}", entity.getId(), e.getMessage());
+                }
             }
+            log.info("Warmed reference-character cache: {} entries from PostgreSQL", loaded);
         } catch (Exception e) {
-            log.warn("Could not ensure index '{}': {}", INDEX, e.getMessage());
+            log.warn("Could not warm reference-character cache from PostgreSQL: {}", e.getMessage());
         }
     }
 
-    /**
-     * On startup, load all reference characters into the in-memory cache.
-     */
-    private void warmCache() {
+    private ReferenceCharacterEntity toEntity(ReferenceCharacterDto dto) {
         try {
-            SearchResponse<ReferenceCharacterDto> response = openSearchClient.search(s -> s
-                            .index(INDEX)
-                            .size(200)
-                            .query(q -> q.matchAll(m -> m)),
-                    ReferenceCharacterDto.class
-            );
-            int loaded = 0;
-            for (var hit : response.hits().hits()) {
-                if (hit.id() != null && hit.source() != null) {
-                    cache.put(hit.id(), hit.source());
-                    loaded++;
-                }
-            }
-            log.info("Warmed reference-character cache: {} entries from '{}'", loaded, INDEX);
+            return ReferenceCharacterEntity.builder()
+                    .id(docId(dto.getSystemId(), dto.getActorType()))
+                    .systemId(dto.getSystemId())
+                    .actorType(dto.getActorType())
+                    .label(dto.getLabel())
+                    .capturedAt(dto.getCapturedAt())
+                    .actorDataJson(objectMapper.writeValueAsString(dto.getActorData()))
+                    .itemsJson(objectMapper.writeValueAsString(dto.getItems()))
+                    .build();
         } catch (Exception e) {
-            log.warn("Could not warm reference-character cache from OpenSearch: {}", e.getMessage());
+            throw new RuntimeException("Failed to serialize ReferenceCharacterDto", e);
+        }
+    }
+
+    private ReferenceCharacterDto toDto(ReferenceCharacterEntity entity) {
+        try {
+            Map<String, Object> actorData = objectMapper.readValue(
+                    entity.getActorDataJson(), new TypeReference<>() {});
+            List<Map<String, Object>> items = objectMapper.readValue(
+                    entity.getItemsJson(), new TypeReference<>() {});
+            return ReferenceCharacterDto.builder()
+                    .systemId(entity.getSystemId())
+                    .actorType(entity.getActorType())
+                    .label(entity.getLabel())
+                    .capturedAt(entity.getCapturedAt())
+                    .actorData(actorData)
+                    .items(items)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to deserialize ReferenceCharacterDto", e);
         }
     }
 }

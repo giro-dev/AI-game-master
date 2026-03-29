@@ -20,10 +20,11 @@ public class CharacterGenerationService {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final WebSocketController webSocketController;
-    private final RAGService ragService;
-    private final GameMasterManualSolver gameMasterManualSolver;
-    private final SystemProfileService systemProfileService;
-    private final SystemAwarePromptBuilder promptBuilder;
+
+    // Specialized agents: concept, fields and items
+    private final ConceptAgent conceptAgent;
+    private final FieldFillerAgent fieldFillerAgent;
+    private final ItemGenerationAgent itemGenerationAgent;
 
     // Fallback prompts used only when no System Profile is available
     private static final String FALLBACK_CORE_CONCEPT_PROMPT = """
@@ -87,13 +88,12 @@ public class CharacterGenerationService {
             Length: 2-3 paragraphs
             """;
 
-    public CharacterGenerationService(ChatClient.Builder chatClientBuilder, 
+    public CharacterGenerationService(ChatClient.Builder chatClientBuilder,
                                       ObjectMapper objectMapper,
                                       WebSocketController webSocketController,
-                                      RAGService ragService,
-                                      GameMasterManualSolver gameMasterManualSolver,
-                                      SystemProfileService systemProfileService,
-                                      SystemAwarePromptBuilder promptBuilder) {
+                                      ConceptAgent conceptAgent,
+                                      FieldFillerAgent fieldFillerAgent,
+                                      ItemGenerationAgent itemGenerationAgent) {
         this.chatClient = chatClientBuilder
                 .defaultOptions(ChatOptions.builder()
                         .model("gpt-4o-mini")
@@ -102,10 +102,9 @@ public class CharacterGenerationService {
                 .build();
         this.objectMapper = objectMapper;
         this.webSocketController = webSocketController;
-        this.ragService = ragService;
-        this.gameMasterManualSolver = gameMasterManualSolver;
-        this.systemProfileService = systemProfileService;
-        this.promptBuilder = promptBuilder;
+        this.conceptAgent = conceptAgent;
+        this.fieldFillerAgent = fieldFillerAgent;
+        this.itemGenerationAgent = itemGenerationAgent;
     }
 
     /**
@@ -126,22 +125,32 @@ public class CharacterGenerationService {
         try {
             // Step 1: Generate core concept (20% progress)
             sendProgress(sessionId, "Generating character concept...", 20);
-            Map<String, Object> coreConcept = generateCoreConcept(request, language);
+            Map<String, Object> coreConcept = conceptAgent.generateCoreConcept(request, language);
             log.info("Generated core concept: {}", coreConcept.get("name"));
 
-            // Step 2: Group and fill fields (40-80% progress)
+            // Step 2: Group and fill fields (40-80% progress) via FieldFillerAgent
             sendProgress(sessionId, "Filling character attributes...", 40);
-            Map<String, Object> systemData = fillFieldsInGroups(coreConcept, request, language, sessionId);
-            log.info("Filled {} field groups", systemData.size());
+            Map<String, Object> systemData = fieldFillerAgent.fillFieldsInGroups(
+                    coreConcept,
+                    request,
+                    language,
+                    (step, progress) -> sendProgress(sessionId, step, progress)
+            );
+            log.info("Filled fields after constraint enforcement: {} entries", systemData.size());
+            // Diagnostic: log habilidades-related keys so we can confirm they were generated
+            List<String> habilidadKeys = systemData.keySet().stream()
+                    .filter(k -> k.toLowerCase().contains("habilidad"))
+                    .collect(Collectors.toList());
+            if (!habilidadKeys.isEmpty()) {
+                log.info("Habilidades keys in systemData: {}", habilidadKeys);
+                habilidadKeys.forEach(k -> log.info("  {} = {}", k, systemData.get(k)));
+            } else {
+                log.warn("No habilidades keys found in systemData. All keys: {}", systemData.keySet());
+            }
 
-            // Step 2.5: Enforce constraints (programmatic correction)
-            sendProgress(sessionId, "Verifying constraints...", 85);
-            systemData = enforceConstraints(systemData, request);
-            log.info("Constraints enforced on {} fields", systemData.size());
-
-            // Step 3: Generate items (90% progress)
+            // Step 3: Generate items (90% progress) via ItemGenerationAgent
             sendProgress(sessionId, "Generating items...", 90);
-            List<CreateCharacterResponse.ItemDto> items = generateItems(coreConcept, request, language);
+            List<CreateCharacterResponse.ItemDto> items = itemGenerationAgent.generateItems(coreConcept, request, language);
             log.info("Generated {} items", items.size());
 
             // Assemble final response
@@ -194,473 +203,9 @@ public class CharacterGenerationService {
         }
     }
 
-    /**
-     * Try to resolve the System Knowledge Profile for the current request.
-     */
-    private SystemProfileDto resolveProfile(String systemId) {
-        return systemProfileService.getProfile(systemId).orElse(null);
-    }
 
-    /**
-     * Step 1: Generate core character concept
-     * Uses the System Profile for dynamic prompts when available.
-     */
-    private Map<String, Object> generateCoreConcept(CreateCharacterRequest request, String language) throws Exception {
-        String systemId = request.getBlueprint().getSystemId();
-        SystemProfileDto profile = resolveProfile(systemId);
 
-        // Build system context: profile-aware or fallback to RAG guidance
-        String systemContext;
-        if (profile != null) {
-            systemContext = promptBuilder.buildSystemContext(profile);
-        } else {
-            systemContext = getActorTypeGuidance(request.getActorType(), systemId);
-        }
 
-        // Inject reference character context if available
-        String referenceContext = "";
-        var refOpt = systemProfileService.getReferenceCharacter(systemId, request.getActorType());
-        if (refOpt.isPresent()) {
-            referenceContext = promptBuilder.buildReferenceCharacterContext(refOpt.get(), "system");
-            log.info("Using reference character '{}' for core concept generation", refOpt.get().getLabel());
-        }
-        
-        String userPrompt = String.format(
-            "System: %s\nActor Type: %s\n\n%s\n\n%s\n\nUser Request: %s\n\n" +
-            "Create a character concept. " +
-            "IMPORTANT: Your response MUST be a JSON object with a \"name\" key (the character's name as a string). " +
-            "Do NOT omit the \"name\" key. Example: {\"name\": \"Character Name\", \"concept\": \"...\", ...}",
-            systemId,
-            request.getActorType(),
-            systemContext,
-            referenceContext,
-            request.getPrompt()
-        );
-
-        // Use profile-aware prompt or fallback
-        String systemPrompt = (profile != null)
-                ? promptBuilder.buildCoreConceptPrompt(profile, language)
-                : FALLBACK_CORE_CONCEPT_PROMPT.replace("{language}", language);
-
-        String responseJson = chatClient.prompt()
-                .system(systemPrompt)
-                .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt))
-                .call()
-                .content();
-
-        responseJson = cleanJsonResponse(responseJson);
-        log.debug("Core concept raw response: {}", responseJson);
-        Map<String, Object> concept = objectMapper.readValue(responseJson, Map.class);
-        log.info("Core concept keys: {}, name='{}'", concept.keySet(), concept.get("name"));
-        return concept;
-    }
-
-    /**
-     * Step 2: Fill fields in semantic groups.
-     * Uses the System Profile for dynamic grouping when available,
-     * falls back to the legacy hardcoded grouping otherwise.
-     */
-    private Map<String, Object> fillFieldsInGroups(
-            Map<String, Object> coreConcept, 
-            CreateCharacterRequest request, 
-            String language,
-            String sessionId) throws Exception {
-        
-        Map<String, Object> allSystemData = new java.util.HashMap<>();
-        String systemId = request.getBlueprint().getSystemId();
-        SystemProfileDto profile = resolveProfile(systemId);
-
-        // Build system context once
-        String systemContext;
-        if (profile != null) {
-            systemContext = promptBuilder.buildSystemContext(profile);
-        } else {
-            systemContext = getActorTypeGuidance(request.getActorType(), systemId);
-        }
-        
-        // Group fields: profile-based dynamic grouping or legacy fallback
-        Map<String, List<CharacterBlueprintDto.FieldDto>> fieldGroups;
-        if (profile != null && profile.getFieldGroups() != null && !profile.getFieldGroups().isEmpty()) {
-            fieldGroups = groupFieldsFromProfile(profile, request.getBlueprint());
-            log.info("Using profile-based field grouping: {} groups", fieldGroups.size());
-        } else {
-            fieldGroups = groupFieldsLegacy(request.getBlueprint());
-            log.info("Using legacy field grouping: {} groups", fieldGroups.size());
-        }
-        
-        int groupIndex = 0;
-        int totalGroups = fieldGroups.size();
-        
-        for (Map.Entry<String, List<CharacterBlueprintDto.FieldDto>> entry : fieldGroups.entrySet()) {
-            String groupName = entry.getKey();
-            List<CharacterBlueprintDto.FieldDto> fields = entry.getValue();
-            
-            int progress = 40 + (40 * groupIndex / Math.max(totalGroups, 1));
-            sendProgress(sessionId, "Filling " + groupName + "...", progress);
-            
-            log.info("Filling field group '{}' with {} fields", groupName, fields.size());
-            
-            Map<String, Object> groupValues = fillFieldGroup(coreConcept, fields, systemContext, language, request);
-            allSystemData.putAll(groupValues);
-            
-            groupIndex++;
-        }
-        
-        return allSystemData;
-    }
-
-    /**
-     * Step 2.5: Programmatically enforce constraints on AI-generated values.
-     * This catches cases where the AI doesn't respect point budgets exactly.
-     * Applies proportional scaling to ensure budget constraints are met.
-     */
-    private Map<String, Object> enforceConstraints(Map<String, Object> systemData, CreateCharacterRequest request) {
-        String systemId = request.getBlueprint().getSystemId();
-        SystemProfileDto profile = resolveProfile(systemId);
-        
-        if (profile == null || profile.getDetectedConstraints() == null) {
-            return systemData;
-        }
-        
-        Map<String, Object> corrected = new java.util.HashMap<>(systemData);
-        
-        for (var constraint : profile.getDetectedConstraints()) {
-            if (!"point_budget".equals(constraint.getType())) continue;
-            if (constraint.getParameters() == null) continue;
-            
-            Number totalBudgetNum = (Number) constraint.getParameters().get("total");
-            if (totalBudgetNum == null) continue;
-            
-            double totalBudget = totalBudgetNum.doubleValue();
-            String budgetPath = constraint.getFieldPath();
-            Number minValNum = (Number) constraint.getParameters().get("min");
-            Number maxValNum = (Number) constraint.getParameters().get("max");
-            double minVal = minValNum != null ? minValNum.doubleValue() : 0;
-            double maxVal = maxValNum != null ? maxValNum.doubleValue() : Double.MAX_VALUE;
-            
-            // Collect all numeric fields under this budget path
-            List<String> budgetFieldKeys = corrected.keySet().stream()
-                    .filter(k -> k.startsWith(budgetPath))
-                    .filter(k -> {
-                        Object v = corrected.get(k);
-                        return v instanceof Number;
-                    })
-                    .collect(Collectors.toList());
-            
-            if (budgetFieldKeys.isEmpty()) continue;
-            
-            // Calculate current total
-            double currentTotal = budgetFieldKeys.stream()
-                    .mapToDouble(k -> ((Number) corrected.get(k)).doubleValue())
-                    .sum();
-            
-            if (Math.abs(currentTotal - totalBudget) < 0.01) {
-                log.info("Budget constraint '{}' already satisfied: total={}", budgetPath, currentTotal);
-                continue;
-            }
-            
-            log.info("Enforcing budget constraint '{}': AI total={}, required={}, fields={}",
-                    budgetPath, currentTotal, totalBudget, budgetFieldKeys.size());
-            
-            // Strategy: proportional scaling with clamping to min/max
-            if (currentTotal > 0) {
-                double scale = totalBudget / currentTotal;
-                double runningTotal = 0;
-                
-                for (int i = 0; i < budgetFieldKeys.size(); i++) {
-                    String key = budgetFieldKeys.get(i);
-                    double original = ((Number) corrected.get(key)).doubleValue();
-                    
-                    if (i == budgetFieldKeys.size() - 1) {
-                        // Last field: assign remaining budget to avoid rounding errors
-                        double remaining = totalBudget - runningTotal;
-                        double clamped = Math.max(minVal, Math.min(maxVal, remaining));
-                        corrected.put(key, (int) Math.round(clamped));
-                    } else {
-                        double scaled = original * scale;
-                        double clamped = Math.max(minVal, Math.min(maxVal, scaled));
-                        int rounded = (int) Math.round(clamped);
-                        corrected.put(key, rounded);
-                        runningTotal += rounded;
-                    }
-                }
-                
-                // Verify and do a second pass if rounding caused drift
-                double finalTotal = budgetFieldKeys.stream()
-                        .mapToDouble(k -> ((Number) corrected.get(k)).doubleValue())
-                        .sum();
-                
-                if (Math.abs(finalTotal - totalBudget) > 0.01) {
-                    // Distribute remaining difference across fields with room
-                    int diff = (int) Math.round(totalBudget - finalTotal);
-                    for (String key : budgetFieldKeys) {
-                        if (diff == 0) break;
-                        int current = ((Number) corrected.get(key)).intValue();
-                        if (diff > 0 && current < maxVal) {
-                            int add = (int) Math.min(diff, maxVal - current);
-                            corrected.put(key, current + add);
-                            diff -= add;
-                        } else if (diff < 0 && current > minVal) {
-                            int sub = (int) Math.min(-diff, current - minVal);
-                            corrected.put(key, current - sub);
-                            diff += sub;
-                        }
-                    }
-                }
-                
-                double verifiedTotal = budgetFieldKeys.stream()
-                        .mapToDouble(k -> ((Number) corrected.get(k)).doubleValue())
-                        .sum();
-                log.info("Budget constraint '{}' enforced: {} → {} (target={})",
-                        budgetPath, currentTotal, verifiedTotal, totalBudget);
-            } else {
-                // All zeros or negatives: distribute budget equally
-                int perField = (int) Math.round(totalBudget / budgetFieldKeys.size());
-                double runningTotal = 0;
-                for (int i = 0; i < budgetFieldKeys.size(); i++) {
-                    if (i == budgetFieldKeys.size() - 1) {
-                        int remaining = (int) Math.round(totalBudget - runningTotal);
-                        corrected.put(budgetFieldKeys.get(i), Math.max((int) minVal, Math.min((int) maxVal, remaining)));
-                    } else {
-                        int clamped = Math.max((int) minVal, Math.min((int) maxVal, perField));
-                        corrected.put(budgetFieldKeys.get(i), clamped);
-                        runningTotal += clamped;
-                    }
-                }
-                log.info("Budget constraint '{}' enforced from all-zero: distributed {} equally", budgetPath, totalBudget);
-            }
-        }
-        
-        // Enforce range constraints
-        for (var constraint : profile.getDetectedConstraints()) {
-            if (!"range".equals(constraint.getType())) continue;
-            if (constraint.getParameters() == null) continue;
-            
-            String path = constraint.getFieldPath();
-            Object value = corrected.get(path);
-            if (!(value instanceof Number)) continue;
-            
-            double numVal = ((Number) value).doubleValue();
-            Number minNum = (Number) constraint.getParameters().get("min");
-            Number maxNum = (Number) constraint.getParameters().get("max");
-            
-            double min = minNum != null ? minNum.doubleValue() : Double.MIN_VALUE;
-            double max = maxNum != null ? maxNum.doubleValue() : Double.MAX_VALUE;
-            
-            if (numVal < min || numVal > max) {
-                int clamped = (int) Math.round(Math.max(min, Math.min(max, numVal)));
-                corrected.put(path, clamped);
-                log.info("Range constraint enforced for '{}': {} → {} (min={}, max={})", path, numVal, clamped, min, max);
-            }
-        }
-        
-        return corrected;
-    }
-
-    /**
-     * Fill a single group of fields.
-     * Uses profile-aware prompts when available.
-     * Injects explicit budget constraints for the fields in this group.
-     */
-    private Map<String, Object> fillFieldGroup(
-            Map<String, Object> coreConcept,
-            List<CharacterBlueprintDto.FieldDto> fields,
-            String systemContext,
-            String language,
-            CreateCharacterRequest request) throws Exception {
-        
-        SystemProfileDto profile = resolveProfile(request.getBlueprint().getSystemId());
-
-        // Look up reference character for this system+actorType
-        var refOpt = systemProfileService.getReferenceCharacter(
-                request.getBlueprint().getSystemId(), request.getActorType());
-
-        StringBuilder userPrompt = new StringBuilder();
-        userPrompt.append("Character Concept:\n");
-        userPrompt.append(objectMapper.writeValueAsString(coreConcept)).append("\n\n");
-        
-        userPrompt.append("System Rules & Context:\n");
-        userPrompt.append(systemContext).append("\n\n");
-
-        // Inject reference character's system data so the AI sees exact field paths & value types
-        if (refOpt.isPresent()) {
-            userPrompt.append(promptBuilder.buildReferenceCharacterContext(refOpt.get(), "system"));
-        }
-        
-        userPrompt.append("Fields to fill:\n");
-        userPrompt.append(objectMapper.writeValueAsString(fields)).append("\n\n");
-        
-        // Add value range hints from profile
-        if (profile != null && profile.getValueRanges() != null && !profile.getValueRanges().isEmpty()) {
-            userPrompt.append("Typical value ranges for reference:\n");
-            for (CharacterBlueprintDto.FieldDto field : fields) {
-                SystemProfileDto.ValueRange range = profile.getValueRanges().get(field.getPath());
-                if (range != null) {
-                    userPrompt.append("  ").append(field.getPath())
-                            .append(": min=").append(range.getMin())
-                            .append(", max=").append(range.getMax())
-                            .append(", typical=").append(range.getTypical()).append("\n");
-                }
-            }
-            userPrompt.append("\n");
-        }
-        
-        // Inject explicit budget constraints for fields in THIS group
-        if (profile != null && profile.getDetectedConstraints() != null) {
-            for (var constraint : profile.getDetectedConstraints()) {
-                if (!"point_budget".equals(constraint.getType())) continue;
-                
-                String budgetPath = constraint.getFieldPath();
-                // Find which fields in this group fall under this budget
-                List<CharacterBlueprintDto.FieldDto> budgetFields = fields.stream()
-                        .filter(f -> f.getPath() != null && f.getPath().startsWith(budgetPath))
-                        .filter(f -> "number".equals(f.getType()) || "resource".equals(f.getType()))
-                        .collect(Collectors.toList());
-                
-                if (!budgetFields.isEmpty() && constraint.getParameters() != null) {
-                    Number totalBudget = (Number) constraint.getParameters().get("total");
-                    Number minVal = (Number) constraint.getParameters().get("min");
-                    Number maxVal = (Number) constraint.getParameters().get("max");
-                    
-                    if (totalBudget != null) {
-                        userPrompt.append("\n=== MANDATORY BUDGET FOR THIS GROUP ===\n");
-                        userPrompt.append("The following ").append(budgetFields.size())
-                                .append(" fields must have their values SUM to EXACTLY ")
-                                .append(totalBudget).append(":\n");
-                        for (var bf : budgetFields) {
-                            userPrompt.append("  - ").append(bf.getPath()).append("\n");
-                        }
-                        if (minVal != null) {
-                            userPrompt.append("Each value must be >= ").append(minVal).append("\n");
-                        }
-                        if (maxVal != null) {
-                            userPrompt.append("Each value must be <= ").append(maxVal).append("\n");
-                        }
-                        userPrompt.append("VERIFY: After choosing values, confirm the sum = ")
-                                .append(totalBudget).append(" before responding.\n");
-                        userPrompt.append("=== END BUDGET ===\n\n");
-                    }
-                }
-            }
-        }
-        
-        userPrompt.append("Fill ALL these fields with appropriate values based on the character concept.");
-
-        String systemPrompt = (profile != null)
-                ? promptBuilder.buildFillFieldsPrompt(profile, language)
-                : FALLBACK_FILL_FIELDS_PROMPT.replace("{language}", language);
-
-        String responseJson = chatClient.prompt()
-                .system(systemPrompt)
-                .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt.toString()))
-                .call()
-                .content();
-
-        responseJson = cleanJsonResponse(responseJson);
-        log.debug("Field group response: {}", responseJson);
-        
-        return objectMapper.readValue(responseJson, Map.class);
-    }
-
-    /**
-     * Step 3: Generate items based on character concept.
-     * Uses profile-aware prompts when available.
-     */
-    private List<CreateCharacterResponse.ItemDto> generateItems(
-            Map<String, Object> coreConcept,
-            CreateCharacterRequest request,
-            String language) throws Exception {
-
-        String systemId = request.getBlueprint().getSystemId();
-        var refOpt = systemProfileService.getReferenceCharacter(systemId, request.getActorType());
-
-        // If no available items in blueprint AND no reference character, skip
-        boolean hasBlueprint = request.getBlueprint().getAvailableItems() != null &&
-                !request.getBlueprint().getAvailableItems().isEmpty();
-        boolean hasReference = refOpt.isPresent() && refOpt.get().getItems() != null &&
-                !refOpt.get().getItems().isEmpty();
-
-        if (!hasBlueprint && !hasReference) {
-            log.info("No available items in blueprint and no reference character, skipping item generation");
-            return List.of();
-        }
-
-        SystemProfileDto profile = resolveProfile(systemId);
-
-        // Get RAG context for items
-        List<String> itemTypes = request.getBlueprint().getAvailableItems() != null
-                ? request.getBlueprint().getAvailableItems().stream()
-                    .map(item -> {
-                        if (item instanceof Map) {
-                            return (String) ((Map<?, ?>) item).get("type");
-                        }
-                        return null;
-                    })
-                    .filter(type -> type != null)
-                    .collect(Collectors.toList())
-                : List.of();
-
-        String itemContext = "";
-        if (!itemTypes.isEmpty()) {
-            try {
-                itemContext = ragService.searchItemContext(
-                    itemTypes,
-                    request.getBlueprint().getSystemId(),
-                    2
-                );
-            } catch (Exception e) {
-                log.warn("Failed to retrieve item context", e);
-            }
-        }
-
-        StringBuilder userPrompt = new StringBuilder();
-        userPrompt.append("Character Concept:\n");
-        userPrompt.append(objectMapper.writeValueAsString(coreConcept)).append("\n\n");
-        
-        // Add system context from profile
-        if (profile != null) {
-            userPrompt.append(promptBuilder.buildSystemContext(profile)).append("\n");
-        }
-
-        // ── Reference character's items: the single most important context for items ──
-        if (hasReference) {
-            userPrompt.append(promptBuilder.buildReferenceCharacterContext(refOpt.get(), "items"));
-            userPrompt.append("IMPORTANT: Your generated items MUST use the EXACT same structure (type, system fields) as the reference items above.\n");
-            userPrompt.append("Clone the reference item structures but change names, descriptions, and values to fit the new character concept.\n\n");
-        }
-        
-        if (hasBlueprint) {
-            userPrompt.append("Available Item Types:\n");
-            userPrompt.append(objectMapper.writeValueAsString(request.getBlueprint().getAvailableItems())).append("\n\n");
-        }
-        
-        if (!itemContext.isEmpty()) {
-            userPrompt.append("Item Rules from Manuals:\n");
-            userPrompt.append(itemContext).append("\n\n");
-        }
-        
-        userPrompt.append("Create 2-4 appropriate items for this character.");
-
-        String systemPrompt = (profile != null)
-                ? promptBuilder.buildItemGenerationPrompt(profile, language)
-                : FALLBACK_ITEMS_PROMPT.replace("{language}", language);
-
-        String responseJson = chatClient.prompt()
-                .system(systemPrompt)
-                .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt.toString()))
-                .call()
-                .content();
-
-        responseJson = cleanJsonResponse(responseJson);
-        log.debug("Items response: {}", responseJson);
-        
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> itemMaps = objectMapper.readValue(responseJson, List.class);
-        
-        return itemMaps.stream()
-                .map(itemMap -> objectMapper.convertValue(itemMap, CreateCharacterResponse.ItemDto.class))
-                .collect(Collectors.toList());
-    }
 
     /**
      * Assemble final character response from all parts
@@ -684,6 +229,10 @@ public class CharacterGenerationService {
         
         // Build nested system data structure from flat field paths
         Map<String, Object> nestedSystem = buildNestedStructure(systemData, coreConcept);
+        log.info("Nested system top-level keys: {}", nestedSystem.keySet());
+        if (nestedSystem.containsKey("habilidades")) {
+            log.info("Nested habilidades structure: {}", nestedSystem.get("habilidades"));
+        }
         actor.setSystem(nestedSystem);
         
         // Build character data
@@ -752,111 +301,6 @@ public class CharacterGenerationService {
         current.put(parts[parts.length - 1], value);
     }
 
-    /**
-     * Group fields using the System Knowledge Profile.
-     * Maps profile field groups to actual blueprint fields.
-     */
-    private Map<String, List<CharacterBlueprintDto.FieldDto>> groupFieldsFromProfile(
-            SystemProfileDto profile, CharacterBlueprintDto blueprint) {
-        
-        Map<String, List<String>> profileGroups = promptBuilder.getFieldGroupsFromProfile(profile);
-        Map<String, List<CharacterBlueprintDto.FieldDto>> result = new java.util.LinkedHashMap<>();
-        Set<String> assignedPaths = new java.util.HashSet<>();
-        
-        // Convert blueprint fields to a map for quick lookup
-        Map<String, CharacterBlueprintDto.FieldDto> fieldMap = new java.util.LinkedHashMap<>();
-        for (Object fieldObj : blueprint.getActorFields()) {
-            CharacterBlueprintDto.FieldDto field = objectMapper.convertValue(fieldObj, CharacterBlueprintDto.FieldDto.class);
-            fieldMap.put(field.getPath(), field);
-        }
-        
-        // Assign fields to profile groups
-        for (Map.Entry<String, List<String>> groupEntry : profileGroups.entrySet()) {
-            String groupName = groupEntry.getKey();
-            List<CharacterBlueprintDto.FieldDto> groupFields = new java.util.ArrayList<>();
-            
-            for (String profilePath : groupEntry.getValue()) {
-                // Exact match
-                if (fieldMap.containsKey(profilePath) && !assignedPaths.contains(profilePath)) {
-                    groupFields.add(fieldMap.get(profilePath));
-                    assignedPaths.add(profilePath);
-                    continue;
-                }
-                // Prefix match (profile says "system.abilities" matches "system.abilities.str.value")
-                for (Map.Entry<String, CharacterBlueprintDto.FieldDto> fe : fieldMap.entrySet()) {
-                    if (fe.getKey().startsWith(profilePath) && !assignedPaths.contains(fe.getKey())) {
-                        groupFields.add(fe.getValue());
-                        assignedPaths.add(fe.getKey());
-                    }
-                }
-            }
-            
-            if (!groupFields.isEmpty()) {
-                result.put(groupName, groupFields);
-            }
-        }
-        
-        // Put any unassigned fields in an "other" group
-        List<CharacterBlueprintDto.FieldDto> unassigned = new java.util.ArrayList<>();
-        for (Map.Entry<String, CharacterBlueprintDto.FieldDto> fe : fieldMap.entrySet()) {
-            if (!assignedPaths.contains(fe.getKey())) {
-                unassigned.add(fe.getValue());
-            }
-        }
-        if (!unassigned.isEmpty()) {
-            result.put("other fields", unassigned);
-        }
-        
-        return result;
-    }
-
-    /**
-     * Legacy field grouping using path-based structural heuristic.
-     * Used as fallback when no System Profile is available.
-     */
-    private Map<String, List<CharacterBlueprintDto.FieldDto>> groupFieldsLegacy(CharacterBlueprintDto blueprint) {
-        // Structural grouping based on path hierarchy (system-agnostic)
-        Map<String, List<CharacterBlueprintDto.FieldDto>> groups = new java.util.LinkedHashMap<>();
-        
-        for (Object fieldObj : blueprint.getActorFields()) {
-            CharacterBlueprintDto.FieldDto field = objectMapper.convertValue(fieldObj, CharacterBlueprintDto.FieldDto.class);
-            String path = field.getPath();
-            
-            // Extract the top-level group from path: "system.abilities.str" → "abilities"
-            String[] parts = path.split("\\.");
-            String groupKey;
-            if (parts.length >= 3 && "system".equals(parts[0])) {
-                groupKey = parts[1];
-            } else if (parts.length >= 2) {
-                groupKey = parts[0];
-            } else {
-                groupKey = "other";
-            }
-            
-            // Prettify group name
-            String groupName = groupKey.substring(0, 1).toUpperCase() + groupKey.substring(1)
-                    .replaceAll("([A-Z])", " $1").replaceAll("_", " ").trim();
-            
-            groups.computeIfAbsent(groupName, k -> new java.util.ArrayList<>()).add(field);
-        }
-        
-        return groups;
-    }
-
-    /**
-     * Get actor type guidance from RAG
-     */
-    private String getActorTypeGuidance(String actorType, String systemId) {
-        try {
-            return gameMasterManualSolver.solveDoubt(
-                String.format("How do I create a %s in this game system? What are the rules and important considerations?", actorType),
-                systemId
-            );
-        } catch (Exception e) {
-            log.warn("Failed to retrieve actor type guidance", e);
-            return "";
-        }
-    }
 
     /**
      * Send progress update via WebSocket

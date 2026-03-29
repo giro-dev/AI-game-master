@@ -31,6 +31,7 @@ public class SystemProfileService {
     private final ObjectMapper objectMapper;
     private final RAGService ragService;
     private final ReferenceCharacterRepository referenceCharacterRepository;
+    private final SystemProfileRepository systemProfileRepository;
     private final Map<String, SystemProfileDto> profileCache = new ConcurrentHashMap<>();
 
     private static final String FIELD_GROUPING_PROMPT = """
@@ -102,7 +103,8 @@ public class SystemProfileService {
     public SystemProfileService(ChatClient.Builder chatClientBuilder,
                                 ObjectMapper objectMapper,
                                 RAGService ragService,
-                                ReferenceCharacterRepository referenceCharacterRepository) {
+                                ReferenceCharacterRepository referenceCharacterRepository,
+                                SystemProfileRepository systemProfileRepository) {
         this.chatClient = chatClientBuilder
                 .defaultOptions(ChatOptions.builder()
                         .model("gpt-4.1-mini")
@@ -112,6 +114,7 @@ public class SystemProfileService {
         this.objectMapper = objectMapper;
         this.ragService = ragService;
         this.referenceCharacterRepository = referenceCharacterRepository;
+        this.systemProfileRepository = systemProfileRepository;
     }
 
     /**
@@ -121,8 +124,8 @@ public class SystemProfileService {
         log.info("Processing system snapshot for: {} v{}", snapshot.getSystemId(), snapshot.getSystemVersion());
 
         try {
-            // Check if we have a cached profile that's still valid
-            SystemProfileDto existing = profileCache.get(snapshot.getSystemId());
+            // Check if we have a cached or persisted profile that's still valid
+            SystemProfileDto existing = getProfile(snapshot.getSystemId()).orElse(null);
             if (existing != null && snapshot.getSystemVersion().equals(existing.getSystemVersion())) {
                 log.info("Profile already up to date for {} v{}", snapshot.getSystemId(), snapshot.getSystemVersion());
                 return existing;
@@ -142,7 +145,7 @@ public class SystemProfileService {
                     .systemId(snapshot.getSystemId())
                     .systemVersion(snapshot.getSystemVersion())
                     .systemTitle(snapshot.getSystemTitle())
-                    .lastUpdated(Instant.now())
+                    .lastUpdated(Instant.now().toEpochMilli())
                     .fieldGroups(fieldGroups)
                     .detectedConstraints(analysis.constraints)
                     .characterCreationSteps(analysis.creationSteps)
@@ -162,6 +165,7 @@ public class SystemProfileService {
             }
 
             profileCache.put(snapshot.getSystemId(), profile);
+            systemProfileRepository.save(profile);
             log.info("System profile built for {}: {} field groups, {} constraints",
                     snapshot.getSystemId(), fieldGroups.size(), analysis.constraints.size());
 
@@ -178,7 +182,14 @@ public class SystemProfileService {
      * Get an existing profile by system ID.
      */
     public Optional<SystemProfileDto> getProfile(String systemId) {
-        return Optional.ofNullable(profileCache.get(systemId));
+        SystemProfileDto cached = profileCache.get(systemId);
+        if (cached != null) {
+            return Optional.of(cached);
+        }
+
+        Optional<SystemProfileDto> stored = systemProfileRepository.find(systemId);
+        stored.ifPresent(p -> profileCache.put(systemId, p));
+        return stored;
     }
 
     /**
@@ -186,7 +197,7 @@ public class SystemProfileService {
      * Called after ingestion pipeline completes.
      */
     public void enrichFromIngestion(String systemId, List<Document> classifiedChunks, List<Document> entityDocs) {
-        SystemProfileDto profile = profileCache.get(systemId);
+        SystemProfileDto profile = getProfile(systemId).orElse(null);
         if (profile == null) {
             log.warn("No profile found for system {} to enrich", systemId);
             return;
@@ -195,7 +206,9 @@ public class SystemProfileService {
         try {
             enrichFromManuals(profile, systemId);
             profile.setEnrichedFromManuals(true);
-            profile.setLastUpdated(Instant.now());
+            profile.setLastUpdated(Instant.now().toEpochMilli());
+            profileCache.put(systemId, profile);
+            systemProfileRepository.save(profile);
             log.info("Profile enriched from ingestion for system {}", systemId);
         } catch (Exception e) {
             log.warn("Failed to enrich profile from ingestion: {}", e.getMessage());
@@ -505,7 +518,7 @@ public class SystemProfileService {
                 .systemId(snapshot.getSystemId())
                 .systemVersion(snapshot.getSystemVersion())
                 .systemTitle(snapshot.getSystemTitle())
-                .lastUpdated(Instant.now())
+                .lastUpdated(Instant.now().toEpochMilli())
                 .fieldGroups(groups)
                 .detectedConstraints(List.of())
                 .characterCreationSteps(List.of())

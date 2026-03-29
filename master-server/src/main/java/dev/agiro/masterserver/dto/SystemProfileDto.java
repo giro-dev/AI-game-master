@@ -1,11 +1,11 @@
 package dev.agiro.masterserver.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -22,7 +22,8 @@ public class SystemProfileDto {
     private String systemId;
     private String systemVersion;
     private String systemTitle;
-    private Instant lastUpdated;
+    @JsonDeserialize(using = ReferenceCharacterDto.FlexibleTimestampDeserializer.class)
+    private Long lastUpdated;
 
     /** AI-inferred semantic field groups for this system */
     private List<FieldGroup> fieldGroups;

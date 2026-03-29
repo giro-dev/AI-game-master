@@ -115,7 +115,7 @@ public class CharacterGenerationController {
             return ResponseEntity.badRequest().build();
         }
 
-        request.setCapturedAt(Instant.now());
+        request.setCapturedAt(Instant.now().toEpochMilli());
         systemProfileService.storeReferenceCharacter(request);
 
         return ResponseEntity.ok(request);
