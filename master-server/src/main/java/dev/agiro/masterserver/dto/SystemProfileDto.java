@@ -52,6 +52,21 @@ public class SystemProfileDto {
     /** Whether this profile has been enriched from ingested manuals */
     private boolean enrichedFromManuals;
 
+    /** Semantic mapping of system fields to universal RPG concepts */
+    private SemanticMapDto semanticMap;
+
+    /** Detected roll mechanics for this system */
+    private RollMechanicsDto rollMechanics;
+
+    /** Overall confidence of the semantic mapping (0.0 to 1.0) */
+    private Double confidence;
+
+    /** Example actor data used for few-shot generation */
+    private List<Map<String, Object>> actorExamples;
+
+    /** Example item data used for few-shot generation */
+    private List<Map<String, Object>> itemExamples;
+
     @Data
     @Builder
     @NoArgsConstructor

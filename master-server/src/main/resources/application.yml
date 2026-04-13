@@ -53,14 +53,27 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 300MB
+      max-request-size: 300MB
+
+server:
+  tomcat:
+    max-swallow-size: -1
+    max-http-form-post-size: -1
 
 game-master:
   chat:
     default-language: catalan
     default-model: gpt-4.1-mini
-
+  ingestion:
+    enable-rate-limit: false
+    rpm-limit: 90
+    tpm-limit: 38000
+    max-retries: 5
+    chunk-size: 2000
+    min-chunk-size-chars: 300
+    min-chunk-length-to-embed: 50
+    window-minutes: 1
 
 logging:
   level:

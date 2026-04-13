@@ -1,9 +1,12 @@
 package dev.agiro.masterserver.pdf_extractor;
 
+import dev.agiro.masterserver.config.GameMasterConfig;
 import dev.agiro.masterserver.controller.WebSocketController;
 import dev.agiro.masterserver.dto.BookDto;
+import dev.agiro.masterserver.dto.CompendiumDto;
 import dev.agiro.masterserver.dto.IngestionEvent;
 import dev.agiro.masterserver.dto.WebSocketMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,17 +48,12 @@ public class IngestionPipeline {
     private final EntityExtractor entityExtractor;
     private final VectorStore vectorStore;
     private final WebSocketController webSocketController;
-    private final dev.agiro.masterserver.service.SystemProfileService systemProfileService;
+    private final dev.agiro.masterserver.tool.SystemProfileService systemProfileService;
     private final OpenSearchClient openSearchClient;
+    private final GameMasterConfig gameMasterConfig;
 
     /** In-memory book registry (replace with a persistent store if needed) */
     private final Map<String, BookDto> bookRegistry = new ConcurrentHashMap<>();
-
-    // Rate-limit settings for embedding API
-    private static final int RPM_LIMIT = 90;
-    private static final int TPM_LIMIT = 38_000;
-    private static final Duration WINDOW = Duration.ofMinutes(1);
-    private static final int MAX_RETRIES = 5;
 
     // ─── public API ───────────────────────────────────────────────────────
 
@@ -95,10 +93,11 @@ public class IngestionPipeline {
 
             List<Document> rawDocs = pdfDocumentReader.getDocsFromPdfWithCatalog(pdfBytes, foundrySystem);
 
+            var ingestionCfg = gameMasterConfig.getIngestion();
             TokenTextSplitter splitter = TokenTextSplitter.builder()
-                    .withChunkSize(2000)
-                    .withMinChunkSizeChars(300)
-                    .withMinChunkLengthToEmbed(50)
+                    .withChunkSize(ingestionCfg.getChunkSize())
+                    .withMinChunkSizeChars(ingestionCfg.getMinChunkSizeChars())
+                    .withMinChunkLengthToEmbed(ingestionCfg.getMinChunkLengthToEmbed())
                     .build();
 
             // Table detection
@@ -123,78 +122,85 @@ public class IngestionPipeline {
                     .totalChunks(totalChunks)
                     .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
 
-            // ── Stage 2: AI Classification ──────────────────────────────
-            book.setStatus("CLASSIFYING");
+            // ── Stages 2–4: Classify → Extract → Store (per batch) ────
+            book.setStatus("PROCESSING");
             sendProgress(sessionId, IngestionEvent.builder()
-                    .bookId(bookId).worldId(worldId).status("CLASSIFYING").progress(30)
-                    .message("Classifying chunks with AI…")
+                    .bookId(bookId).worldId(worldId).status("PROCESSING").progress(30)
+                    .message("Processing chunks (classify → extract → store)…")
                     .totalChunks(totalChunks)
                     .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
 
-            List<Document> classifiedChunks = documentClassifier.classify(chunks);
-            log.info("[{}] Stage 2 complete: classified {} chunks", bookId, classifiedChunks.size());
+            int batchSize = documentClassifier.getBatchSize();
+            int totalEntities = 0;
+            int chunksProcessed = 0;
 
-            sendProgress(sessionId, IngestionEvent.builder()
-                    .bookId(bookId).worldId(worldId).status("CLASSIFYING").progress(55)
-                    .message("Classification complete")
-                    .totalChunks(totalChunks)
-                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+            for (int i = 0; i < chunks.size(); i += batchSize) {
+                List<Document> batch = chunks.subList(i, Math.min(i + batchSize, chunks.size()));
 
-            // ── Stage 3: Entity Extraction ──────────────────────────────
-            book.setStatus("EXTRACTING");
-            sendProgress(sessionId, IngestionEvent.builder()
-                    .bookId(bookId).worldId(worldId).status("EXTRACTING").progress(60)
-                    .message("Extracting structured entities…")
-                    .totalChunks(totalChunks)
-                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+                // 2a – classify this batch
+                documentClassifier.classifyBatch(batch);
 
-            List<Document> entityDocs = entityExtractor.extractEntities(classifiedChunks);
-            log.info("[{}] Stage 3 complete: {} entities extracted", bookId, entityDocs.size());
+                // 2b – extract entities & collect documents to store
+                List<Document> toStore = new ArrayList<>(batch.size() * 2);
+                for (Document doc : batch) {
+                    doc.getMetadata().putIfAbsent("document_type", "raw_chunk");
+                    toStore.add(doc);
 
-            sendProgress(sessionId, IngestionEvent.builder()
-                    .bookId(bookId).worldId(worldId).status("EXTRACTING").progress(75)
-                    .message("Extracted " + entityDocs.size() + " entities")
-                    .totalChunks(totalChunks).entitiesExtracted(entityDocs.size())
-                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+                    List<Document> entities = entityExtractor.extractFromDocument(doc);
+                    toStore.addAll(entities);
+                    totalEntities += entities.size();
+                }
 
-            // ── Stage 4: Mark raw chunks & store ────────────────────────
-            book.setStatus("STORING");
-            for (Document doc : classifiedChunks) {
-                doc.getMetadata().putIfAbsent("document_type", "raw_chunk");
+                // 2c – store this batch immediately
+                storeWithRateLimit(toStore);
+                chunksProcessed += batch.size();
+
+                // progress: 30 → 80 proportionally
+                int progress = 30 + (int) ((chunksProcessed / (double) totalChunks) * 50);
+                sendProgress(sessionId, IngestionEvent.builder()
+                        .bookId(bookId).worldId(worldId).status("PROCESSING").progress(progress)
+                        .message("Processed " + chunksProcessed + "/" + totalChunks + " chunks (" + totalEntities + " entities)")
+                        .totalChunks(totalChunks).entitiesExtracted(totalEntities).chunksProcessed(chunksProcessed)
+                        .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+
+                log.info("[{}] Batch {}/{} done — {} entities so far",
+                        bookId, chunksProcessed, totalChunks, totalEntities);
             }
 
-            List<Document> allDocuments = new ArrayList<>(classifiedChunks);
-            allDocuments.addAll(entityDocs);
-
-            sendProgress(sessionId, IngestionEvent.builder()
-                    .bookId(bookId).worldId(worldId).status("STORING").progress(80)
-                    .message("Storing " + allDocuments.size() + " documents in vector store…")
-                    .totalChunks(totalChunks).entitiesExtracted(entityDocs.size())
-                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
-
-            storeWithRateLimit(allDocuments);
+            log.info("[{}] Stages 2–4 complete: {} chunks processed, {} entities extracted",
+                    bookId, chunksProcessed, totalEntities);
 
             // ── Stage 5: Enrich System Profile with new knowledge ───────
             try {
                 log.info("[{}] Enriching system profile for {}", bookId, foundrySystem);
-                systemProfileService.enrichFromIngestion(foundrySystem, classifiedChunks, entityDocs);
+                systemProfileService.enrichFromIngestion(foundrySystem, List.of(), List.of());
             } catch (Exception enrichErr) {
                 log.warn("[{}] System profile enrichment failed (non-blocking): {}", bookId, enrichErr.getMessage());
             }
 
             // ── Done ────────────────────────────────────────────────────
             book.setStatus("COMPLETED");
-            book.setChunkCount(classifiedChunks.size());
-            book.setEntityCount(entityDocs.size());
+            book.setChunkCount(chunksProcessed);
+            book.setEntityCount(totalEntities);
 
             sendProgress(sessionId, IngestionEvent.builder()
                     .bookId(bookId).worldId(worldId).status("COMPLETED").progress(100)
-                    .message("Ingestion complete: " + classifiedChunks.size() + " chunks, " + entityDocs.size() + " entities")
-                    .totalChunks(classifiedChunks.size()).entitiesExtracted(entityDocs.size())
-                    .chunksProcessed(classifiedChunks.size())
+                    .message("Ingestion complete: " + chunksProcessed + " chunks, " + totalEntities + " entities")
+                    .totalChunks(chunksProcessed).entitiesExtracted(totalEntities)
+                    .chunksProcessed(chunksProcessed)
                     .build(), WebSocketMessage.MessageType.INGESTION_COMPLETED);
 
-            log.info("[{}] Ingestion complete — {} chunks, {} entities", bookId, classifiedChunks.size(), entityDocs.size());
+            log.info("[{}] Ingestion complete — {} chunks, {} entities", bookId, chunksProcessed, totalEntities);
+
+            // ── Stage 6: Generate & send compendium ─────────────────────
+            try {
+                CompendiumDto compendium = getCompendium(bookId);
+                log.info("[{}] Compendium generated: {} entities across {} types",
+                        bookId, compendium.getTotalEntities(), compendium.getEntitiesByType().size());
+                sendProgress(sessionId, compendium, WebSocketMessage.MessageType.INGESTION_COMPENDIUM);
+            } catch (Exception compErr) {
+                log.warn("[{}] Compendium generation failed (non-blocking): {}", bookId, compErr.getMessage());
+            }
 
         } catch (Exception e) {
             log.error("[{}] Ingestion failed", book.getBookId(), e);
@@ -220,8 +226,86 @@ public class IngestionPipeline {
 
     public void deleteBook(String bookId) {
         bookRegistry.remove(bookId);
-        // TODO: also delete documents from vector store filtered by book_id == bookId
-        log.info("Book {} removed from registry", bookId);
+        try {
+            var result = openSearchClient.deleteByQuery(d -> d
+                    .index("vector-store")
+                    .query(q -> q
+                            .term(t -> t
+                                    .field("metadata.book_id")
+                                    .value(v -> v.stringValue(bookId))
+                            )
+                    )
+            );
+            long deleted = result.deleted() != null ? result.deleted() : 0;
+            log.info("Book {} removed — {} documents deleted from OpenSearch", bookId, deleted);
+        } catch (Exception e) {
+            log.error("Failed to delete documents for book {} from OpenSearch: {}", bookId, e.getMessage(), e);
+            throw new RuntimeException("Failed to delete book data from vector store", e);
+        }
+    }
+
+    /**
+     * Build a compendium from all extracted entities for a given book.
+     */
+    public CompendiumDto getCompendium(String bookId) {
+        BookDto book = bookRegistry.get(bookId);
+        try {
+            SearchResponse<Map> response = openSearchClient.search(s -> s
+                    .index("vector-store")
+                    .size(10_000)
+                    .query(q -> q
+                            .bool(b -> b
+                                    .must(m -> m.term(t -> t.field("metadata.book_id").value(v -> v.stringValue(bookId))))
+                                    .must(m -> m.term(t -> t.field("metadata.document_type").value(v -> v.stringValue("extracted_entity"))))
+                            )
+                    ), Map.class);
+
+            Map<String, List<CompendiumDto.CompendiumEntry>> entitiesByType = new LinkedHashMap<>();
+            ObjectMapper mapper = new ObjectMapper();
+
+            for (Hit<Map> hit : response.hits().hits()) {
+                Map<String, Object> source = hit.source();
+                if (source == null) continue;
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> metadata = (Map<String, Object>) source.get("metadata");
+                String content = (String) source.get("content");
+
+                String entityType = metadata != null ? (String) metadata.getOrDefault("entity_type", "unknown") : "unknown";
+                String entityName = metadata != null ? (String) metadata.getOrDefault("entity_name", "unknown") : "unknown";
+                String sourceChunkId = metadata != null ? (String) metadata.get("source_chunk_id") : null;
+
+                Map<String, Object> data;
+                try {
+                    data = mapper.readValue(content, mapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
+                } catch (Exception e) {
+                    data = Map.of("raw_text", content != null ? content : "");
+                }
+
+                CompendiumDto.CompendiumEntry entry = CompendiumDto.CompendiumEntry.builder()
+                        .entityName(entityName)
+                        .entityType(entityType)
+                        .sourceChunkId(sourceChunkId)
+                        .data(data)
+                        .build();
+
+                entitiesByType.computeIfAbsent(entityType, k -> new ArrayList<>()).add(entry);
+            }
+
+            int totalEntities = entitiesByType.values().stream().mapToInt(List::size).sum();
+
+            return CompendiumDto.builder()
+                    .bookId(bookId)
+                    .bookTitle(book != null ? book.getBookTitle() : "unknown")
+                    .foundrySystem(book != null ? book.getFoundrySystem() : "unknown")
+                    .totalEntities(totalEntities)
+                    .entitiesByType(entitiesByType)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Failed to build compendium for book {}: {}", bookId, e.getMessage(), e);
+            throw new RuntimeException("Failed to build compendium", e);
+        }
     }
 
     // ─── Rebuild registry on startup ──────────────────────────────────────
@@ -292,16 +376,25 @@ public class IngestionPipeline {
     }
 
     private void storeWithRateLimit(List<Document> documents) {
+        if (!gameMasterConfig.getIngestion().isEnableRateLimit()) {
+            log.debug("Rate limiting disabled — storing {} documents without throttling", documents.size());
+            for (Document doc : documents) {
+                sendWithRetry(doc);
+            }
+            return;
+        }
+
         long windowStart = System.currentTimeMillis();
         int requests = 0;
         int tokens = 0;
 
         for (Document doc : documents) {
+            log.atDebug().log("Embeding document {} of {}", requests, documents.size());
             int docTokens = estimateTokens(doc.getText());
             long elapsed = System.currentTimeMillis() - windowStart;
 
-            if (requests >= RPM_LIMIT || tokens + docTokens > TPM_LIMIT) {
-                long sleep = WINDOW.toMillis() - elapsed;
+            if (requests >= gameMasterConfig.getIngestion().getRpmLimit() || tokens + docTokens > gameMasterConfig.getIngestion().getTpmLimit()) {
+                long sleep = gameMasterConfig.getIngestion().getWindowMinutes() * 60_000L - elapsed;
                 if (sleep > 0) {
                     log.debug("Rate-limit pause: {} ms", sleep);
                     try { Thread.sleep(sleep); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
@@ -326,7 +419,7 @@ public class IngestionPipeline {
             } catch (NonTransientAiException ex) {
                 String msg = ex.getMessage() == null ? "" : ex.getMessage().toLowerCase();
                 boolean retryable = msg.contains("429") || msg.contains("rate limit") || msg.contains("insufficient_quota");
-                if (!retryable || attempt >= MAX_RETRIES) throw ex;
+                if (!retryable || attempt >= gameMasterConfig.getIngestion().getMaxRetries()) throw ex;
                 attempt++;
                 long backoff = (long) Math.min(60_000, Math.pow(2, attempt) * 1_000L);
                 log.warn("Embedding throttled (attempt {}), backoff {} ms", attempt, backoff);
@@ -340,9 +433,9 @@ public class IngestionPipeline {
         return (int) Math.ceil(text.length() / 4.0);
     }
 
-    private void sendProgress(String sessionId, IngestionEvent event, WebSocketMessage.MessageType type) {
+    private void sendProgress(String sessionId, Object payload, WebSocketMessage.MessageType type) {
         if (sessionId == null) return;
-        WebSocketMessage msg = WebSocketMessage.success(type, sessionId, event);
+        WebSocketMessage msg = WebSocketMessage.success(type, sessionId, payload);
         webSocketController.sendIngestionUpdate(sessionId, msg);
     }
 }

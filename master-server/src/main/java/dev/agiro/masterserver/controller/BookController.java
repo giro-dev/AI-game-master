@@ -1,6 +1,7 @@
 package dev.agiro.masterserver.controller;
 
 import dev.agiro.masterserver.dto.BookDto;
+import dev.agiro.masterserver.dto.CompendiumDto;
 import dev.agiro.masterserver.pdf_extractor.IngestionPipeline;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -88,12 +89,26 @@ public class BookController {
     }
 
     /**
-     * Delete a book and its chunks.
+     * Delete a book and all its documents from the vector store.
      */
     @DeleteMapping("/{bookId}")
     public ResponseEntity<Map<String, String>> deleteBook(@PathVariable String bookId) {
         ingestionPipeline.deleteBook(bookId);
-        return ResponseEntity.ok(Map.of("message", "Book deleted", "bookId", bookId));
+        return ResponseEntity.ok(Map.of("message", "Book and all associated data deleted", "bookId", bookId));
+    }
+
+    /**
+     * Get the compendium of extracted entities for a book.
+     */
+    @GetMapping("/{bookId}/compendium")
+    public ResponseEntity<CompendiumDto> getCompendium(@PathVariable String bookId) {
+        try {
+            CompendiumDto compendium = ingestionPipeline.getCompendium(bookId);
+            return ResponseEntity.ok(compendium);
+        } catch (Exception e) {
+            log.error("Failed to get compendium for book {}: {}", bookId, e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }
 

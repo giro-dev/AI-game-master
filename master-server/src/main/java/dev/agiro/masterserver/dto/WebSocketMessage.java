@@ -60,6 +60,7 @@ public class WebSocketMessage {
         INGESTION_STARTED,
         INGESTION_PROGRESS,
         INGESTION_COMPLETED,
+        INGESTION_COMPENDIUM,
         INGESTION_FAILED,
 
         // Transcription events

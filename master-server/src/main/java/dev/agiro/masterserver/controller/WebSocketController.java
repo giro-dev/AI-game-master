@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.ItemGenerationRequest;
 import dev.agiro.masterserver.dto.ItemGenerationResponse;
 import dev.agiro.masterserver.dto.WebSocketMessage;
-import dev.agiro.masterserver.service.ItemGenerationService;
+import dev.agiro.masterserver.agent.item.ItemGenerationService;
 import dev.agiro.masterserver.service.TranscriptionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;

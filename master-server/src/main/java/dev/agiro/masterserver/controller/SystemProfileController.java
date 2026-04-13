@@ -2,7 +2,7 @@ package dev.agiro.masterserver.controller;
 
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import dev.agiro.masterserver.dto.SystemSnapshotDto;
-import dev.agiro.masterserver.service.SystemProfileService;
+import dev.agiro.masterserver.tool.SystemProfileService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;

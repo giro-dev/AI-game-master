@@ -2,8 +2,8 @@ package dev.agiro.masterserver.controller;
 
 import dev.agiro.masterserver.dto.GameMasterRequest;
 import dev.agiro.masterserver.dto.GameMasterResponse;
-import dev.agiro.masterserver.service.GameMasterManualSolver;
-import dev.agiro.masterserver.service.GameMasterService;
+import dev.agiro.masterserver.agent.lore.GameMasterManualSolver;
+import dev.agiro.masterserver.agent.lore.GameMasterService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;

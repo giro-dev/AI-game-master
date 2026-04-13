@@ -1,12 +1,12 @@
 package dev.agiro.masterserver.controller;
 
+import dev.agiro.masterserver.agent.character.CharacterAgent;
 import dev.agiro.masterserver.dto.CreateCharacterRequest;
 import dev.agiro.masterserver.dto.CreateCharacterResponse;
 import dev.agiro.masterserver.dto.ExplainCharacterRequest;
 import dev.agiro.masterserver.dto.ExplainCharacterResponse;
 import dev.agiro.masterserver.dto.ReferenceCharacterDto;
-import dev.agiro.masterserver.service.CharacterGenerationService;
-import dev.agiro.masterserver.service.SystemProfileService;
+import dev.agiro.masterserver.tool.SystemProfileService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -20,12 +20,12 @@ import java.time.Instant;
 @CrossOrigin(origins = "*")
 public class CharacterGenerationController {
 
-    private final CharacterGenerationService characterGenerationService;
+    private final CharacterAgent characterAgent;
     private final SystemProfileService systemProfileService;
 
-    public CharacterGenerationController(CharacterGenerationService characterGenerationService,
+    public CharacterGenerationController(CharacterAgent characterAgent,
                                          SystemProfileService systemProfileService) {
-        this.characterGenerationService = characterGenerationService;
+        this.characterAgent = characterAgent;
         this.systemProfileService = systemProfileService;
     }
 
@@ -53,7 +53,7 @@ public class CharacterGenerationController {
         }
 
         try {
-            CreateCharacterResponse response = characterGenerationService.generateCharacter(
+            CreateCharacterResponse response = characterAgent.generateCharacter(
                     request,
                     request.getSessionId()
             );
@@ -88,7 +88,7 @@ public class CharacterGenerationController {
         }
 
         try {
-            ExplainCharacterResponse response = characterGenerationService.explainCharacter(request);
+            ExplainCharacterResponse response = characterAgent.explainCharacter(request);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Character explanation failed", e);

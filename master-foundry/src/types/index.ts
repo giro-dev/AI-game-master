@@ -88,6 +88,7 @@ export type WebSocketEventName =
     | 'onIngestionStarted'
     | 'onIngestionProgress'
     | 'onIngestionCompleted'
+    | 'onIngestionCompendium'
     | 'onIngestionFailed'
     | 'onNotification'
     | 'onError'
@@ -119,6 +120,7 @@ export type MessageType =
     | 'INGESTION_STARTED'
     | 'INGESTION_PROGRESS'
     | 'INGESTION_COMPLETED'
+    | 'INGESTION_COMPENDIUM'
     | 'INGESTION_FAILED'
     // Generic notifications
     | 'NOTIFICATION'
@@ -153,6 +155,21 @@ export interface SystemProfile {
     detectedConstraints?: SystemConstraint[];
     valueRanges?: Record<string, any>;
     characterCreationSteps?: string[];
+
+    /** Semantic mapping of system fields to universal RPG concepts */
+    semanticMap?: SemanticMap;
+
+    /** Detected roll mechanics for this system */
+    rollMechanics?: RollMechanics;
+
+    /** Overall confidence score (0-1) of the semantic mapping */
+    confidence?: number;
+
+    /** Example actor data used for few-shot generation */
+    actorExamples?: Record<string, unknown>[];
+
+    /** Example item data used for few-shot generation */
+    itemExamples?: Record<string, unknown>[];
 }
 
 // ── Blueprint types ──
@@ -212,6 +229,80 @@ export interface SystemSnapshot {
     valueDistributions: any;
     templateData: any;
     adapterHints: any;
+
+    /** Roll mechanics detected from items and CONFIG */
+    rollMechanics: RollMechanicsSnapshot | null;
+
+    /** Derived/computed fields detected on actor documents */
+    derivedFields: Record<string, DerivedFieldInfo[]>;
+}
+
+// ── Roll Mechanics types ──
+
+export interface RollMechanicsSnapshot {
+    /** Detected dice formula patterns (e.g. "1d20", "2d6", "Xd6") */
+    diceFormulas: string[];
+    /** Fields that appear to trigger or feed into rolls */
+    rollTriggerFields: RollTriggerField[];
+    /** Detected success model */
+    successModel: 'target_number' | 'count_hits' | 'opposed' | 'pbta' | 'unknown';
+    /** Whether skills are stored as embedded items (true in PF2e) or actor fields */
+    skillAsItem: boolean;
+}
+
+export interface RollTriggerField {
+    path: string;
+    type: string;
+    context: string; // e.g. "item action", "actor roll", "formula field"
+}
+
+export interface DerivedFieldInfo {
+    path: string;
+    isDerived: boolean;
+    sourceHint?: string; // e.g. "computed from abilities"
+}
+
+// ── Semantic Map types (returned from server) ──
+
+export type SemanticConcept =
+    | 'health' | 'health_secondary' | 'level' | 'experience'
+    | 'stat_strength' | 'stat_dexterity' | 'stat_constitution'
+    | 'stat_intelligence' | 'stat_wisdom' | 'stat_charisma'
+    | 'stat_generic'
+    | 'skill_rank' | 'roll_attribute'
+    | 'currency' | 'initiative' | 'armor_class'
+    | 'damage_formula' | 'action_trigger'
+    | 'movement_speed' | 'saving_throw'
+    | 'unknown';
+
+export interface FieldMapping {
+    path: string;
+    type: string;
+    range?: [number, number];
+    required: boolean;
+    inferredAs: SemanticConcept;
+    confidence: number;
+}
+
+export interface SemanticMap {
+    health?: FieldMapping;
+    healthSecondary?: FieldMapping;
+    level?: FieldMapping;
+    experience?: FieldMapping;
+    primaryStats: FieldMapping[];
+    skills: FieldMapping[];
+    rollAttribute?: FieldMapping;
+    currency: FieldMapping[];
+    initiative?: FieldMapping;
+    armorClass?: FieldMapping;
+    movementSpeed?: FieldMapping;
+}
+
+export interface RollMechanics {
+    formula: string;
+    successModel: 'target_number' | 'count_hits' | 'opposed' | 'pbta' | 'unknown';
+    modifierSource?: string;
+    skillAsItem: boolean;
 }
 
 // ── Chat / Session types ──
@@ -219,6 +310,8 @@ export interface SystemSnapshot {
 export interface ChatEntry {
     sender: string;
     text: string;
+    id?: string;
+    timestamp?: Date | number;
 }
 
 export interface BookInfo {

@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 public class GameMasterConfig {
     private String defaultSystemPrompt;
     private Chat chat;
+    private Ingestion ingestion;
 
     @Data
     @NoArgsConstructor
@@ -26,5 +27,19 @@ public class GameMasterConfig {
         public void setDefaultModel(String defaultModel) {
             this.defaultModel = defaultModel;
         }
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Ingestion {
+        private boolean enableRateLimit = true;
+        private int rpmLimit = 90;
+        private int tpmLimit = 38000;
+        private int maxRetries = 5;
+        private int chunkSize = 2000;
+        private int minChunkSizeChars = 300;
+        private int minChunkLengthToEmbed = 50;
+        private int windowMinutes = 1;
     }
 }

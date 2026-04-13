@@ -9,7 +9,7 @@
  */
 
 import { SchemaExtractor } from '../schema/schema-extractor.js';
-import type { SystemSnapshot } from '../types/index.js';
+import type { SystemSnapshot, RollMechanicsSnapshot, RollTriggerField, DerivedFieldInfo } from '../types/index.js';
 
 export class SystemSnapshotCollector {
     private readonly schemaExtractor: SchemaExtractor;
@@ -51,7 +51,13 @@ export class SystemSnapshotCollector {
             templateData: this._collectTemplateData(),
 
             // 7. Active adapter hints (if any adapter is registered)
-            adapterHints: this._collectAdapterHints()
+            adapterHints: this._collectAdapterHints(),
+
+            // 8. Roll mechanics detection
+            rollMechanics: this._collectRollMechanics(),
+
+            // 9. Derived/computed field detection
+            derivedFields: this._collectDerivedFields()
         };
 
         console.log(`[AI-GM Snapshot] Snapshot collected: ${snapshot.schemas.actorTypes.length} actor types, ${snapshot.schemas.itemTypes.length} item types`);
@@ -327,6 +333,192 @@ export class SystemSnapshotCollector {
     }
 
     // ─── Utility Methods ────────────────────────────────────────────────
+
+    // ─── 8. Roll Mechanics Detection ────────────────────────────────────
+
+    private _collectRollMechanics(): RollMechanicsSnapshot | null {
+        try {
+            const diceFormulas = new Set<string>();
+            const rollTriggerFields: RollTriggerField[] = [];
+            let skillAsItem = false;
+
+            // Sample items to detect roll/action fields and dice formulas
+            const itemSources: any[] = [];
+            if (game.items?.size > 0) {
+                for (const item of game.items) {
+                    if (itemSources.length >= 30) break;
+                    itemSources.push(item);
+                }
+            }
+            // Also sample embedded items from actors
+            if (game.actors?.size > 0) {
+                for (const actor of game.actors) {
+                    if (actor.items?.size > 0) {
+                        for (const item of actor.items) {
+                            if (itemSources.length >= 50) break;
+                            itemSources.push(item);
+                        }
+                    }
+                    if (itemSources.length >= 50) break;
+                }
+            }
+
+            // Detect dice formula patterns from item data
+            const diceRegex = /\b(\d*d\d+(?:\s*[\+\-]\s*(?:\d+|@\w[\w.]*))*)(?:\s*\/\s*\w+)?\b/gi;
+
+            for (const item of itemSources) {
+                const flat = this._flattenObject(item.system, 'system');
+                for (const [key, value] of Object.entries(flat)) {
+                    if (typeof value === 'string') {
+                        const matches = value.match(diceRegex);
+                        if (matches) {
+                            matches.forEach(m => diceFormulas.add(m.trim()));
+                            rollTriggerFields.push({
+                                path: key,
+                                type: 'string',
+                                context: 'formula field'
+                            });
+                        }
+                    }
+
+                    // Detect action-type fields
+                    const lowerKey = key.toLowerCase();
+                    if (lowerKey.includes('actiontype') || lowerKey.includes('activation') ||
+                        lowerKey.includes('rolltype') || lowerKey.includes('attackbonus')) {
+                        rollTriggerFields.push({
+                            path: key,
+                            type: typeof value,
+                            context: 'item action'
+                        });
+                    }
+                }
+
+                // Check if skills are items (PF2e pattern)
+                const itemType = (item.type || '').toLowerCase();
+                if (itemType === 'skill' || itemType === 'lore') {
+                    skillAsItem = true;
+                }
+            }
+
+            // Detect dice formulas from CONFIG (some systems register their dice there)
+            const systemConfigKey = this._findSystemConfigKey();
+            if (systemConfigKey && CONFIG[systemConfigKey]) {
+                const configStr = JSON.stringify(this._safeSerialize(CONFIG[systemConfigKey], 2));
+                const configMatches = configStr.match(diceRegex);
+                if (configMatches) {
+                    configMatches.forEach(m => diceFormulas.add(m.trim()));
+                }
+            }
+
+            // Infer success model from dice patterns
+            const successModel = this._inferSuccessModel(Array.from(diceFormulas));
+
+            // Deduplicate roll trigger fields by path
+            const seenPaths = new Set<string>();
+            const uniqueTriggers = rollTriggerFields.filter(f => {
+                if (seenPaths.has(f.path)) return false;
+                seenPaths.add(f.path);
+                return true;
+            });
+
+            return {
+                diceFormulas: Array.from(diceFormulas).slice(0, 20),
+                rollTriggerFields: uniqueTriggers.slice(0, 30),
+                successModel,
+                skillAsItem
+            };
+        } catch (e) {
+            console.warn('[AI-GM Snapshot] Failed to collect roll mechanics:', e);
+            return null;
+        }
+    }
+
+    /**
+     * Infer the success model from detected dice formulas
+     */
+    private _inferSuccessModel(formulas: string[]): RollMechanicsSnapshot['successModel'] {
+        if (formulas.length === 0) return 'unknown';
+
+        const joined = formulas.join(' ').toLowerCase();
+
+        // PbtA: 2d6 is the signature
+        if (formulas.some(f => /^2d6$/i.test(f.trim()))) return 'pbta';
+
+        // Count hits: Xd6 patterns common in Shadowrun, WoD (variable pool)
+        if (formulas.some(f => /^\d*d6$/i.test(f.trim())) && !joined.includes('d20')) {
+            // If we see lots of d6-only formulas with no d20, likely count_hits
+            const d6Only = formulas.filter(f => /^\d*d6$/i.test(f.trim()));
+            if (d6Only.length > formulas.length / 2) return 'count_hits';
+        }
+
+        // Target number: d20 systems (D&D, PF2e)
+        if (formulas.some(f => /d20/i.test(f))) return 'target_number';
+
+        return 'unknown';
+    }
+
+    // ─── 9. Derived Fields Detection ────────────────────────────────────
+
+    private _collectDerivedFields(): Record<string, DerivedFieldInfo[]> {
+        const result: Record<string, DerivedFieldInfo[]> = {};
+
+        if (!game.actors?.size) return result;
+
+        for (const actor of game.actors) {
+            const type = actor.type;
+            if (result[type]) continue; // One pass per type
+
+            const derived: DerivedFieldInfo[] = [];
+
+            try {
+                // Walk the actor.system object and detect properties that look derived
+                this._detectDerivedFieldsRecursive(actor.system, 'system', derived, actor);
+            } catch (e) {
+                console.warn(`[AI-GM Snapshot] Failed to detect derived fields for type ${type}:`, e);
+            }
+
+            if (derived.length > 0) {
+                result[type] = derived;
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Recursively walk an object detecting fields that are getters or have
+     * value/max patterns suggesting derivation.
+     */
+    private _detectDerivedFieldsRecursive(
+        obj: any, prefix: string, out: DerivedFieldInfo[], actor: any
+    ): void {
+        if (!obj || typeof obj !== 'object' || out.length >= 50) return;
+
+        const proto = Object.getPrototypeOf(obj);
+        for (const key of Object.keys(obj)) {
+            if (key.startsWith('_') || key.startsWith('#')) continue;
+            const fullPath = `${prefix}.${key}`;
+            const value = obj[key];
+
+            // Check if it's a getter on the prototype (= computed/derived)
+            if (proto) {
+                const descriptor = Object.getOwnPropertyDescriptor(proto, key);
+                if (descriptor?.get) {
+                    out.push({ path: fullPath, isDerived: true, sourceHint: 'getter property' });
+                    continue;
+                }
+            }
+
+            // Detect value/max pairs where max looks derived
+            if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+                if ('value' in value && 'max' in value) {
+                    out.push({ path: fullPath, isDerived: false, sourceHint: 'resource (value/max)' });
+                }
+                // Recurse
+                this._detectDerivedFieldsRecursive(value, fullPath, out, actor);
+            }
+        }
+    }
 
     /**
      * Safely serialize an object with depth limit to avoid circular refs

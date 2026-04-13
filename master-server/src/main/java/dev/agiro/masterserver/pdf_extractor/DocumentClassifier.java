@@ -54,7 +54,15 @@ public class DocumentClassifier {
         return classified;
     }
 
-    private void classifyBatch(List<Document> batch) {
+    public int getBatchSize() {
+        return BATCH_SIZE;
+    }
+
+    /**
+     * Classify a single batch of documents, enriching each with {@code chunk_type} metadata.
+     * Documents are mutated in place.
+     */
+    public void classifyBatch(List<Document> batch) {
         StringBuilder userMessage = new StringBuilder();
         userMessage.append("Classify each of the following RPG document chunks. ");
         userMessage.append("Return a JSON array with one entry per chunk, in the same order.\n\n");

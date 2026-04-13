@@ -46,6 +46,43 @@ public class SystemSnapshotDto {
     /** Hints from any active system adapter */
     private Map<String, Object> adapterHints;
 
+    /** Roll mechanics detected from items and CONFIG */
+    private RollMechanicsSnapshot rollMechanics;
+
+    /** Derived/computed fields detected on actor documents */
+    private Map<String, List<DerivedFieldInfo>> derivedFields;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RollMechanicsSnapshot {
+        private List<String> diceFormulas;
+        private List<RollTriggerFieldSnapshot> rollTriggerFields;
+        private String successModel;
+        private boolean skillAsItem;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RollTriggerFieldSnapshot {
+        private String path;
+        private String type;
+        private String context;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DerivedFieldInfo {
+        private String path;
+        private boolean isDerived;
+        private String sourceHint;
+    }
+
     @Data
     @Builder
     @NoArgsConstructor
