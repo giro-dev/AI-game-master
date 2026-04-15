@@ -106,14 +106,15 @@ public class FeedbackService {
         boolean reExtraction = false;
         if (newConfidence < RE_EXTRACTION_THRESHOLD) {
             log.info("[Feedback] Confidence {:.2f} < threshold {:.2f} for '{}' — scheduling re-extraction",
-                    newConfidence, RE_EXTRACTION_THRESHOLD, correction.getSystemId());
+                    String.format("%.2f", newConfidence), String.format("%.2f", RE_EXTRACTION_THRESHOLD),
+                    correction.getSystemId());
             systemProfileService.scheduleReExtraction(correction.getSystemId());
             reExtraction = true;
         }
 
         String summary = buildSummary(changedPaths, newConfidence, reExtraction);
-        log.info("[Feedback] {} — newConfidence={:.2f}, reExtraction={}",
-                correction.getSystemId(), newConfidence, reExtraction);
+        log.info("[Feedback] {} — newConfidence={}, reExtraction={}",
+                correction.getSystemId(), String.format("%.2f", newConfidence), reExtraction);
 
         return CorrectionAckDto.builder()
                 .correctionId(correctionId)
@@ -165,8 +166,8 @@ public class FeedbackService {
         if (affected) {
             double updated = Math.max(0.0, fm.getConfidence() - CORRECTION_PENALTY);
             fm.setConfidence(updated);
-            log.debug("[Feedback] Penalised '{}' ({}) → confidence={:.2f}",
-                    fm.getPath(), fm.getInferredAs(), updated);
+            log.debug("[Feedback] Penalised '{}' ({}) → confidence={}",
+                    fm.getPath(), fm.getInferredAs(), String.format("%.2f", updated));
         }
     }
 
