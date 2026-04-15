@@ -47,7 +47,7 @@ public class GameMasterController {
         try {
             // No token selected → general rulebook / manual query
             if (request.getTokenId() == null || request.getTokenId().isBlank()) {
-                log.info("No token selected — routing to manual solver");
+                log.info("No token selected -- routing to manual solver");
                 String gameSystem = request.getFoundrySystem() != null ? request.getFoundrySystem() : "unknown";
                 String answer = manualSolver.solveDoubt(request.getPrompt(), gameSystem, request.getConversationId());
                 GameMasterResponse response = new GameMasterResponse();
@@ -72,7 +72,7 @@ public class GameMasterController {
     /**
      * Unified orchestration endpoint (Phase 2+).
      * Uses LLM-powered intent classification to route the request to the appropriate specialist agent.
-     * Supports: lore Q&amp;A, combat advice, character explanations, world questions.
+     * Supports: lore Q&A, combat advice, character explanations, world questions.
      */
     @PostMapping(value = "/orchestrate",
                  consumes = MediaType.APPLICATION_JSON_VALUE,
