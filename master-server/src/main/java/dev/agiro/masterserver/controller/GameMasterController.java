@@ -4,6 +4,7 @@ import dev.agiro.masterserver.dto.GameMasterRequest;
 import dev.agiro.masterserver.dto.GameMasterResponse;
 import dev.agiro.masterserver.agent.lore.GameMasterManualSolver;
 import dev.agiro.masterserver.agent.lore.GameMasterService;
+import dev.agiro.masterserver.agent.OrchestratorAgent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -19,11 +20,14 @@ public class GameMasterController {
 
     private final GameMasterService gameMasterService;
     private final GameMasterManualSolver manualSolver;
+    private final OrchestratorAgent orchestratorAgent;
 
     public GameMasterController(GameMasterService gameMasterService,
-                                GameMasterManualSolver manualSolver) {
+                                GameMasterManualSolver manualSolver,
+                                OrchestratorAgent orchestratorAgent) {
         this.gameMasterService = gameMasterService;
         this.manualSolver = manualSolver;
+        this.orchestratorAgent = orchestratorAgent;
     }
 
     @PostMapping(value = "/respond",
@@ -60,6 +64,36 @@ public class GameMasterController {
             log.error("Error processing request", e);
             GameMasterResponse errorResponse = new GameMasterResponse();
             errorResponse.setNarration("An error occurred while processing your request: " + e.getMessage());
+            errorResponse.setActions(new ArrayList<>());
+            return ResponseEntity.internalServerError().body(errorResponse);
+        }
+    }
+
+    /**
+     * Unified orchestration endpoint (Phase 2+).
+     * Uses LLM-powered intent classification to route the request to the appropriate specialist agent.
+     * Supports: lore Q&amp;A, combat advice, character explanations, world questions.
+     */
+    @PostMapping(value = "/orchestrate",
+                 consumes = MediaType.APPLICATION_JSON_VALUE,
+                 produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<GameMasterResponse> orchestrate(@RequestBody GameMasterRequest request) {
+        log.info("Orchestrate request: '{}'", request.getPrompt());
+
+        if (request.getPrompt() == null || request.getPrompt().isBlank()) {
+            GameMasterResponse errorResponse = new GameMasterResponse();
+            errorResponse.setNarration("I didn't receive a valid prompt. Please try again.");
+            errorResponse.setActions(new ArrayList<>());
+            return ResponseEntity.badRequest().body(errorResponse);
+        }
+
+        try {
+            GameMasterResponse response = orchestratorAgent.orchestrate(request);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Orchestration error", e);
+            GameMasterResponse errorResponse = new GameMasterResponse();
+            errorResponse.setNarration("An error occurred during orchestration: " + e.getMessage());
             errorResponse.setActions(new ArrayList<>());
             return ResponseEntity.internalServerError().body(errorResponse);
         }

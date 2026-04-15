@@ -66,6 +66,21 @@ public class WebSocketMessage {
         // Transcription events
         TRANSCRIPTION_COMPLETED,
 
+        // Combat events (Phase 2)
+        ENCOUNTER_GENERATION_STARTED,
+        ENCOUNTER_GENERATION_COMPLETED,
+        ENCOUNTER_GENERATION_FAILED,
+        COMBAT_ADVICE_COMPLETED,
+        LOOT_DISTRIBUTION_COMPLETED,
+
+        // World events (Phase 3)
+        LOCATION_GENERATION_STARTED,
+        LOCATION_GENERATION_COMPLETED,
+        LOCATION_GENERATION_FAILED,
+        WORLD_EVENT_LOGGED,
+        FACTION_UPDATED,
+        WORLD_CONTEXT_UPDATED,
+
         // Generic notifications
         NOTIFICATION,
         ERROR,

@@ -1,8 +1,15 @@
 package dev.agiro.masterserver.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.agiro.masterserver.agent.combat.CombatAgent;
+import dev.agiro.masterserver.agent.world.WorldAgent;
+import dev.agiro.masterserver.dto.CombatAdviceRequest;
+import dev.agiro.masterserver.dto.CombatAdviceResponse;
+import dev.agiro.masterserver.dto.EncounterRequest;
 import dev.agiro.masterserver.dto.ItemGenerationRequest;
 import dev.agiro.masterserver.dto.ItemGenerationResponse;
+import dev.agiro.masterserver.dto.LocationRequest;
+import dev.agiro.masterserver.dto.WorldEventDto;
 import dev.agiro.masterserver.dto.WebSocketMessage;
 import dev.agiro.masterserver.agent.item.ItemGenerationService;
 import dev.agiro.masterserver.service.TranscriptionService;
@@ -22,15 +29,21 @@ public class WebSocketController {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final ItemGenerationService itemGenerationService;
+    private final CombatAgent combatAgent;
+    private final WorldAgent worldAgent;
     private final ObjectMapper objectMapper;
     private final TranscriptionService transcriptionService;
 
     public WebSocketController(SimpMessagingTemplate messagingTemplate,
                                ItemGenerationService itemGenerationService,
+                               CombatAgent combatAgent,
+                               WorldAgent worldAgent,
                                ObjectMapper objectMapper,
                                TranscriptionService transcriptionService) {
         this.messagingTemplate = messagingTemplate;
         this.itemGenerationService = itemGenerationService;
+        this.combatAgent = combatAgent;
+        this.worldAgent = worldAgent;
         this.objectMapper = objectMapper;
         this.transcriptionService = transcriptionService;
     }
@@ -108,6 +121,52 @@ public class WebSocketController {
     }
 
     /**
+     * Handle encounter generation requests via WebSocket (async — fires and forgets)
+     */
+    @MessageMapping("/encounter/generate")
+    public void handleEncounterGenerate(@Payload WebSocketMessage message) {
+        log.info("Encounter generation request via WS: {}", message.getSessionId());
+        EncounterRequest request = objectMapper.convertValue(message.getPayload(), EncounterRequest.class);
+        if (request.getSessionId() == null) request.setSessionId(message.getSessionId());
+        combatAgent.designEncounterAsync(request);
+    }
+
+    /**
+     * Handle live combat advice requests via WebSocket (sync — immediate response)
+     */
+    @MessageMapping("/combat/advise")
+    public void handleCombatAdvise(@Payload WebSocketMessage message) {
+        log.info("Combat advice request via WS for session: {}", message.getSessionId());
+        CombatAdviceRequest request = objectMapper.convertValue(message.getPayload(), CombatAdviceRequest.class);
+        if (request.getSessionId() == null) request.setSessionId(message.getSessionId());
+        CombatAdviceResponse response = combatAgent.adviseAction(request);
+        sendCombatUpdate(message.getSessionId(), WebSocketMessage.success(
+                WebSocketMessage.MessageType.COMBAT_ADVICE_COMPLETED, message.getSessionId(), response));
+    }
+
+    /**
+     * Handle location generation requests via WebSocket (async — fires and forgets)
+     */
+    @MessageMapping("/world/location/generate")
+    public void handleLocationGenerate(@Payload WebSocketMessage message) {
+        log.info("Location generation request via WS: {}", message.getSessionId());
+        LocationRequest request = objectMapper.convertValue(message.getPayload(), LocationRequest.class);
+        if (request.getSessionId() == null) request.setSessionId(message.getSessionId());
+        worldAgent.generateLocationAsync(request);
+    }
+
+    /**
+     * Handle world event logging via WebSocket
+     */
+    @MessageMapping("/world/event/log")
+    public void handleWorldEventLog(@Payload WebSocketMessage message) {
+        log.info("World event log request via WS: {}", message.getSessionId());
+        WorldEventDto event = objectMapper.convertValue(message.getPayload(), WorldEventDto.class);
+        if (event.getSessionId() == null) event.setSessionId(message.getSessionId());
+        worldAgent.logEvent(event);
+    }
+
+    /**
      * Send a notification to a specific session
      */
     public void sendToSession(String sessionId, WebSocketMessage message) {
@@ -151,5 +210,21 @@ public class WebSocketController {
     public void sendIngestionUpdate(String sessionId, WebSocketMessage message) {
         log.info("Sending ingestion update to session {}: {}", sessionId, message.getType());
         messagingTemplate.convertAndSend("/queue/ingestion-" + sessionId, message);
+    }
+
+    /**
+     * Send combat event update (Phase 2)
+     */
+    public void sendCombatUpdate(String sessionId, WebSocketMessage message) {
+        log.info("Sending combat update to session {}: {}", sessionId, message.getType());
+        messagingTemplate.convertAndSend("/queue/combat-" + sessionId, message);
+    }
+
+    /**
+     * Send world event update (Phase 3)
+     */
+    public void sendWorldUpdate(String sessionId, WebSocketMessage message) {
+        log.info("Sending world update to session {}: {}", sessionId, message.getType());
+        messagingTemplate.convertAndSend("/queue/world-" + sessionId, message);
     }
 }
