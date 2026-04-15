@@ -102,6 +102,31 @@ public class SystemProfileService {
         cache.remove(systemId);
     }
 
+    /**
+     * Persist an already-modified profile (e.g. after confidence re-scoring).
+     * Updates the in-memory cache and writes through to OpenSearch.
+     */
+    public void saveUpdatedProfile(SystemProfileDto profile) {
+        cache.put(profile.getSystemId(), profile);
+        profileRepository.save(profile);
+        log.debug("Saved updated profile for '{}'", profile.getSystemId());
+    }
+
+    /**
+     * Mark a system profile as needing re-extraction and invalidate its cache entry.
+     * The next time a snapshot arrives for this system the profile will be fully rebuilt.
+     */
+    public void scheduleReExtraction(String systemId) {
+        SystemProfileDto profile = getProfile(systemId).orElse(null);
+        if (profile != null) {
+            // Setting version to empty string forces a rebuild on the next snapshot
+            profile.setSystemVersion("");
+            profileRepository.save(profile);
+            log.info("Scheduled re-extraction for '{}' (version cleared)", systemId);
+        }
+        cache.remove(systemId);
+    }
+
     // ── Reference Characters ────────────────────────────────────────────
 
     public void storeReferenceCharacter(ReferenceCharacterDto ref) {

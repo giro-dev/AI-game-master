@@ -357,6 +357,42 @@ export interface BookInfo {
     [key: string]: any;
 }
 
+// ── Feedback / correction loop types ──
+
+/**
+ * Payload POSTed to POST /api/feedback/correction when the GM edits an AI-generated actor.
+ */
+export interface CorrectionPayload {
+    /** Foundry game system ID (e.g. "dnd5e") */
+    systemId: string;
+    /** Actor type (e.g. "character", "npc") */
+    actorType: string;
+    /** The actor's system data as it was when the AI generated it */
+    generatedData: Record<string, unknown>;
+    /** The actor's system data after the GM saved their edits */
+    editedData: Record<string, unknown>;
+    /**
+     * Dot-notation paths that changed, derived from Foundry's updateActor change delta.
+     * Example: ["system.attributes.hp.value", "system.abilities.str.value"]
+     */
+    changedPaths: string[];
+    /** Foundry user ID of the GM who made the edit */
+    userId: string;
+    /** WebSocket session ID */
+    sessionId: string;
+    /** Client-side epoch ms when the edit was committed */
+    timestamp: number;
+}
+
+/** Acknowledgement returned by POST /api/feedback/correction */
+export interface CorrectionAck {
+    correctionId: string;
+    systemId: string;
+    newConfidence: number;
+    reExtractionTriggered: boolean;
+    summary: string;
+}
+
 // ── Action types for session tab ──
 
 export interface VTTAction {

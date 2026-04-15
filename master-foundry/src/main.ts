@@ -11,6 +11,7 @@ import { SystemSnapshotSender } from './system-snapshot/snapshot-sender.js';
 import { PostProcessingEngine } from './system-snapshot/post-processor.js';
 import { AIGameMasterPanel } from './ui/ai-game-master-panel.js';
 import { TranscriptionManager } from './services/transcription-manager.js';
+import { CorrectionTracker } from './services/correction-tracker.js';
 
 const SERVER = 'http://localhost:8080';
 
@@ -27,6 +28,7 @@ Hooks.on('ready', () => {
     let postProcessor: PostProcessingEngine | null = null;
     let panel: AIGameMasterPanel | null = null;
     let transcriptionManager: TranscriptionManager | null = null;
+    let correctionTracker: CorrectionTracker | null = null;
 
     try {
         // Register settings (safe to call multiple times in same session)
@@ -97,6 +99,7 @@ Hooks.on('ready', () => {
         postProcessor,
         panel,
         transcriptionManager,
+        correctionTracker,
         open(): void {
             if (panel) {
                 panel.render(true);
@@ -178,6 +181,16 @@ Hooks.on('ready', () => {
         wsClient.connect().catch((err: any) => {
             console.warn('[AI-GM] WebSocket unavailable:', err.message ?? err);
         });
+    }
+
+    // ── Correction tracker (feedback loop for AI-generated actors) ──
+    try {
+        const sessionId: string = wsClient?.getSessionId() ?? `foundry-${game.user?.id ?? 'unknown'}-${Date.now()}`;
+        correctionTracker = new CorrectionTracker(SERVER, sessionId);
+        correctionTracker.start();
+        if (game.aiGM) game.aiGM.correctionTracker = correctionTracker;
+    } catch (e) {
+        console.error('[AI-GM] CorrectionTracker init failed:', e);
     }
 
     // ── Transcription manager (voice → text) ──
