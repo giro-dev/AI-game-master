@@ -13,7 +13,6 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.regex.Pattern;
 
 /**
  * Semantic Field Inference Service — maps game-system-specific field paths to
@@ -21,7 +20,7 @@ import java.util.regex.Pattern;
  * <p>
  * Uses a two-pass approach:
  * <ol>
- *   <li>Heuristic regex patterns (fast, zero LLM cost) — covers ~70 % of popular systems.</li>
+ *   <li>Heuristic keyword matching (fast, zero LLM cost) — covers ~70 % of popular systems.</li>
  *   <li>LLM structured-output pass for fields that remain ambiguous after the heuristic pass.</li>
  * </ol>
  * The resulting {@link SemanticMapDto} enables system-agnostic character generation.
@@ -32,28 +31,6 @@ public class SemanticFieldInferenceService {
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
-
-    /** Heuristic: regex on field path → universal concept */
-    private static final List<Map.Entry<Pattern, SemanticConcept>> HEURISTICS = List.of(
-            Map.entry(Pattern.compile(".*\\.(hp|health|vida|currentPhysical)\\.value$", Pattern.CASE_INSENSITIVE), SemanticConcept.HEALTH),
-            Map.entry(Pattern.compile(".*\\.(stun|currentStun|sanidad)\\.value$", Pattern.CASE_INSENSITIVE), SemanticConcept.HEALTH_SECONDARY),
-            Map.entry(Pattern.compile(".*(level|nivel|rang|rang)$", Pattern.CASE_INSENSITIVE), SemanticConcept.LEVEL),
-            Map.entry(Pattern.compile(".*(xp|exp|experience|experiencia).*", Pattern.CASE_INSENSITIVE), SemanticConcept.EXPERIENCE),
-            Map.entry(Pattern.compile(".*\\.(str|fuerza|forza|stärke)\\..*", Pattern.CASE_INSENSITIVE), SemanticConcept.STAT_STRENGTH),
-            Map.entry(Pattern.compile(".*\\.(dex|destreza|destrezza|agilidade|agilidad)\\..*", Pattern.CASE_INSENSITIVE), SemanticConcept.STAT_DEXTERITY),
-            Map.entry(Pattern.compile(".*\\.(con|constitution|constitución)\\..*", Pattern.CASE_INSENSITIVE), SemanticConcept.STAT_CONSTITUTION),
-            Map.entry(Pattern.compile(".*\\.(int|intelligence|inteligencia)\\..*", Pattern.CASE_INSENSITIVE), SemanticConcept.STAT_INTELLIGENCE),
-            Map.entry(Pattern.compile(".*\\.(wis|wisdom|sabiduria|intuición)\\..*", Pattern.CASE_INSENSITIVE), SemanticConcept.STAT_WISDOM),
-            Map.entry(Pattern.compile(".*\\.(cha|charisma|carisma)\\..*", Pattern.CASE_INSENSITIVE), SemanticConcept.STAT_CHARISMA),
-            Map.entry(Pattern.compile(".*\\.(skills?|habilidades?|fertigkeiten?)\\..*(rank|value|mod)$", Pattern.CASE_INSENSITIVE), SemanticConcept.SKILL_RANK),
-            Map.entry(Pattern.compile(".*\\.(ac|armor|armadura|rüstung)\\..*", Pattern.CASE_INSENSITIVE), SemanticConcept.ARMOR_CLASS),
-            Map.entry(Pattern.compile(".*\\.(initiative|iniciativa|ini).*", Pattern.CASE_INSENSITIVE), SemanticConcept.INITIATIVE),
-            Map.entry(Pattern.compile(".*\\.(speed|movement|mov|movimiento).*", Pattern.CASE_INSENSITIVE), SemanticConcept.MOVEMENT_SPEED),
-            Map.entry(Pattern.compile(".*\\.(currency|gold|money|dinero|nuyen|credits).*", Pattern.CASE_INSENSITIVE), SemanticConcept.CURRENCY),
-            Map.entry(Pattern.compile(".*\\.(bio|biography|desc|concept|trasfondo|biographie).*", Pattern.CASE_INSENSITIVE), SemanticConcept.BIOGRAPHY),
-            Map.entry(Pattern.compile(".*\\.(spell.*slot|slots?).*", Pattern.CASE_INSENSITIVE), SemanticConcept.SPELL_SLOTS),
-            Map.entry(Pattern.compile(".*\\.(prof|proficiency|maîtrise).*", Pattern.CASE_INSENSITIVE), SemanticConcept.PROFICIENCY)
-    );
 
     private static final String LLM_INFERENCE_PROMPT = """
             You are mapping Foundry VTT game-system fields to universal RPG concepts.
@@ -208,12 +185,109 @@ public class SemanticFieldInferenceService {
     // ── Private helpers ──────────────────────────────────────────────────
 
     private SemanticConcept heuristicMatch(String path) {
-        for (var entry : HEURISTICS) {
-            if (entry.getKey().matcher(path).matches()) {
-                return entry.getValue();
+        // Use simple string operations (no regex) to avoid ReDoS on untrusted field path input.
+        // Field paths are dot-separated tokens, e.g. "system.attributes.hp.value".
+        String lower = path.toLowerCase(java.util.Locale.ROOT);
+        List<String> segments = List.of(lower.split("\\."));
+
+        // Health (hp / health / vida / currentphysical ending with "value")
+        if (lower.endsWith(".value") &&
+                segmentContainsAny(segments, "hp", "health", "vida", "currentphysical")) {
+            return SemanticConcept.HEALTH;
+        }
+        // Secondary health (stun / currentsun / sanidad ending with "value")
+        if (lower.endsWith(".value") &&
+                segmentContainsAny(segments, "stun", "currentsun", "sanidad")) {
+            return SemanticConcept.HEALTH_SECONDARY;
+        }
+        // Level
+        if (segmentEndsWithAny(lower, "level", "nivel", "rang")) {
+            return SemanticConcept.LEVEL;
+        }
+        // Experience
+        if (containsAny(lower, "xp", "experience", "experiencia")) {
+            return SemanticConcept.EXPERIENCE;
+        }
+        // Primary stats (match intermediate segment, e.g. ".str.")
+        if (segmentContainsAny(segments, "str", "fuerza", "forza")) {
+            return SemanticConcept.STAT_STRENGTH;
+        }
+        if (segmentContainsAny(segments, "dex", "destreza", "destrezza", "agilidad", "agilidade")) {
+            return SemanticConcept.STAT_DEXTERITY;
+        }
+        if (segmentContainsAny(segments, "con", "constitution", "constitución")) {
+            return SemanticConcept.STAT_CONSTITUTION;
+        }
+        if (segmentContainsAny(segments, "int", "intelligence", "inteligencia")) {
+            return SemanticConcept.STAT_INTELLIGENCE;
+        }
+        if (segmentContainsAny(segments, "wis", "wisdom", "sabiduria", "intuición")) {
+            return SemanticConcept.STAT_WISDOM;
+        }
+        if (segmentContainsAny(segments, "cha", "charisma", "carisma")) {
+            return SemanticConcept.STAT_CHARISMA;
+        }
+        // Skills (segment named "skills", "habilidades", etc. AND ends with "rank", "value", or "mod")
+        if (segmentContainsAny(segments, "skills", "skill", "habilidades", "fertigkeiten") &&
+                (lower.endsWith(".rank") || lower.endsWith(".value") || lower.endsWith(".mod"))) {
+            return SemanticConcept.SKILL_RANK;
+        }
+        // Armor class
+        if (segmentContainsAny(segments, "ac", "armor", "armadura")) {
+            return SemanticConcept.ARMOR_CLASS;
+        }
+        // Initiative
+        if (containsAny(lower, "initiative", "iniciativa", ".ini")) {
+            return SemanticConcept.INITIATIVE;
+        }
+        // Movement
+        if (containsAny(lower, "speed", "movement", ".mov", "movimiento")) {
+            return SemanticConcept.MOVEMENT_SPEED;
+        }
+        // Currency
+        if (containsAny(lower, "currency", "gold", "money", "dinero", "nuyen", "credits")) {
+            return SemanticConcept.CURRENCY;
+        }
+        // Biography / narrative
+        if (containsAny(lower, ".bio", "biography", ".desc", "trasfondo", "biographie")) {
+            return SemanticConcept.BIOGRAPHY;
+        }
+        // Spell slots
+        if (containsAny(lower, "spellslot", "spell.slot", "slots")) {
+            return SemanticConcept.SPELL_SLOTS;
+        }
+        // Proficiency
+        if (containsAny(lower, ".prof", "proficiency", "maîtrise")) {
+            return SemanticConcept.PROFICIENCY;
+        }
+
+        return SemanticConcept.UNKNOWN;
+    }
+
+    /** True if the lowercased path contains ANY of the given literal substrings. */
+    private static boolean containsAny(String lower, String... keywords) {
+        for (String kw : keywords) {
+            if (lower.contains(kw)) return true;
+        }
+        return false;
+    }
+
+    /** True if any path segment exactly equals one of the given keywords. */
+    private static boolean segmentContainsAny(List<String> segments, String... keywords) {
+        for (String seg : segments) {
+            for (String kw : keywords) {
+                if (seg.equals(kw)) return true;
             }
         }
-        return SemanticConcept.UNKNOWN;
+        return false;
+    }
+
+    /** True if the lowercased path ends with ".<keyword>" for any of the given keywords. */
+    private static boolean segmentEndsWithAny(String lower, String... keywords) {
+        for (String kw : keywords) {
+            if (lower.endsWith("." + kw) || lower.equals(kw)) return true;
+        }
+        return false;
     }
 
     private Map<String, SemanticConcept> llmInference(
