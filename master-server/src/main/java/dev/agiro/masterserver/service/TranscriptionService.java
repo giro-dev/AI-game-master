@@ -82,7 +82,7 @@ public class TranscriptionService {
                     .text(whisperText)
                     .model(transcriptionModel)
                     .speaker(speaker)
-                    .recordedAt(speaker != null && speaker.getSessionId() != null ? now : now)
+                    .recordedAt(now)
                     .transcribedAt(Instant.now().toEpochMilli())
                     .confidence(1.0)
                     .stored(false)
