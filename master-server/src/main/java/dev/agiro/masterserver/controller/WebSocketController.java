@@ -105,19 +105,68 @@ public class WebSocketController {
     }
 
     /**
-     * Handle audio transcription requests
+     * Handle audio transcription requests via WebSocket.
+     * The payload should contain {@code audioBase64} (Base64-encoded audio bytes),
+     * {@code audioFormat} (file extension), and optionally a {@code speaker} object
+     * with Foundry user/character metadata.
      */
     @MessageMapping("/audio/transcribe")
     public void handleAudioTranscription(@Payload WebSocketMessage message) {
         log.info("Audio transcription request received: {}", message.getSessionId());
-        byte[] audioData = (byte[]) message.getPayload();
-        String transcription = transcriptionService.transcribeAudio(audioData);
-        WebSocketMessage response = WebSocketMessage.success(
-                WebSocketMessage.MessageType.TRANSCRIPTION_COMPLETED,
-                message.getSessionId(),
-                transcription
-        );
-        sendToSession(message.getSessionId(), response);
+
+        try {
+            // Accept both legacy raw bytes and new enriched payload map
+            byte[] audioData = null;
+            String audioFormat = "webm";
+            dev.agiro.masterserver.dto.SpeakerContextDto speaker = null;
+
+            Object payload = message.getPayload();
+            if (payload instanceof byte[] bytes) {
+                // Legacy: raw bytes
+                audioData = bytes;
+            } else if (payload instanceof java.util.Map<?, ?> map) {
+                // New format: { audioBase64: "...", audioFormat: "webm", speaker: { ... } }
+                Object b64 = map.get("audioBase64");
+                if (b64 instanceof String s) {
+                    audioData = java.util.Base64.getDecoder().decode(s);
+                }
+                if (map.get("audioFormat") instanceof String f) audioFormat = f;
+                if (map.get("speaker") instanceof java.util.Map<?, ?> sp) {
+                    speaker = objectMapper.convertValue(sp, dev.agiro.masterserver.dto.SpeakerContextDto.class);
+                }
+            }
+
+            if (audioData == null || audioData.length == 0) {
+                sendToSession(message.getSessionId(), WebSocketMessage.error(
+                        WebSocketMessage.MessageType.TRANSCRIPTION_COMPLETED,
+                        message.getSessionId(), "No audio data"));
+                return;
+            }
+
+            if (speaker == null) {
+                speaker = dev.agiro.masterserver.dto.SpeakerContextDto.builder()
+                        .sessionId(message.getSessionId())
+                        .avSource("websocket")
+                        .build();
+            } else if (speaker.getSessionId() == null) {
+                speaker.setSessionId(message.getSessionId());
+            }
+
+            dev.agiro.masterserver.dto.TranscriptionResult result =
+                    transcriptionService.transcribe(audioData, audioFormat, speaker);
+
+            WebSocketMessage response = WebSocketMessage.success(
+                    WebSocketMessage.MessageType.TRANSCRIPTION_COMPLETED,
+                    message.getSessionId(),
+                    result
+            );
+            sendToSession(message.getSessionId(), response);
+        } catch (Exception e) {
+            log.error("[WS] Audio transcription failed", e);
+            sendToSession(message.getSessionId(), WebSocketMessage.error(
+                    WebSocketMessage.MessageType.TRANSCRIPTION_COMPLETED,
+                    message.getSessionId(), "Transcription error: " + e.getMessage()));
+        }
     }
 
     /**

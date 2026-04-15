@@ -10,6 +10,7 @@ import { WebSocketClient } from './websocket-client.js';
 import { SystemSnapshotSender } from './system-snapshot/snapshot-sender.js';
 import { PostProcessingEngine } from './system-snapshot/post-processor.js';
 import { AIGameMasterPanel } from './ui/ai-game-master-panel.js';
+import { TranscriptionManager } from './services/transcription-manager.js';
 
 const SERVER = 'http://localhost:8080';
 
@@ -25,6 +26,7 @@ Hooks.on('ready', () => {
     let snapshotSender: SystemSnapshotSender | null = null;
     let postProcessor: PostProcessingEngine | null = null;
     let panel: AIGameMasterPanel | null = null;
+    let transcriptionManager: TranscriptionManager | null = null;
 
     try {
         // Register settings (safe to call multiple times in same session)
@@ -35,6 +37,26 @@ Hooks.on('ready', () => {
                 config: false,
                 type: String,
                 default: ''
+            });
+        }
+        if (!game.settings.settings.has('ai-gm.transcriptionEnabled')) {
+            game.settings.register('ai-gm', 'transcriptionEnabled', {
+                name: 'Enable Voice Transcription',
+                hint: 'Record your speech while talking in the AV session and transcribe it via OpenAI Whisper.',
+                scope: 'client',
+                config: true,
+                type: Boolean,
+                default: false,
+            });
+        }
+        if (!game.settings.settings.has('ai-gm.transcriptionToChat')) {
+            game.settings.register('ai-gm', 'transcriptionToChat', {
+                name: 'Post Transcriptions to Chat',
+                hint: 'When enabled, each transcription result is posted as a chat message.',
+                scope: 'client',
+                config: true,
+                type: Boolean,
+                default: false,
             });
         }
     } catch (e) {
@@ -74,6 +96,7 @@ Hooks.on('ready', () => {
         snapshotSender,
         postProcessor,
         panel,
+        transcriptionManager,
         open(): void {
             if (panel) {
                 panel.render(true);
@@ -138,9 +161,47 @@ Hooks.on('ready', () => {
             ui.notifications.error(`Ingestion failed: ${data?.error ?? 'unknown'}`);
         });
 
+        // ── Transcription result handling (WS path) ──
+        (wsClient as any).on?.('onTranscriptionCompleted', (data: any) => {
+            if (data?.text) {
+                console.debug('[AI-GM] Transcription (WS):', data.text);
+                if (game.settings?.get('ai-gm', 'transcriptionToChat') === true) {
+                    const speaker = data.speaker;
+                    ChatMessage.create({
+                        content: `<em>[${speaker?.userName ?? 'Unknown'}]</em> ${data.text}`,
+                        speaker: { alias: speaker?.characterName ?? speaker?.userName ?? 'Unknown' },
+                    });
+                }
+            }
+        });
+
         wsClient.connect().catch((err: any) => {
             console.warn('[AI-GM] WebSocket unavailable:', err.message ?? err);
         });
+    }
+
+    // ── Transcription manager (voice → text) ──
+    if (game.settings?.get('ai-gm', 'transcriptionEnabled') === true) {
+        try {
+            const sessionId: string = wsClient?.getSessionId() ?? `foundry-${game.user?.id ?? 'unknown'}-${Date.now()}`;
+            transcriptionManager = new TranscriptionManager(SERVER, sessionId);
+
+            transcriptionManager.onTranscribed((result) => {
+                // Forward to the AI GM panel's session chat if open
+                if (result.text && game.aiGM?.panel) {
+                    (game.aiGM.panel as any)._appendTranscript?.(result);
+                }
+            });
+
+            transcriptionManager.start().catch((e: any) => {
+                console.warn('[AI-GM] TranscriptionManager failed to start:', e);
+            });
+
+            // Keep the reference available on game.aiGM after assignment
+            if (game.aiGM) game.aiGM.transcriptionManager = transcriptionManager;
+        } catch (e) {
+            console.error('[AI-GM] TranscriptionManager init failed:', e);
+        }
     }
 
     // ── System snapshot (learn the active system engine) ──

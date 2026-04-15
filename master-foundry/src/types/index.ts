@@ -93,7 +93,9 @@ export type WebSocketEventName =
     | 'onNotification'
     | 'onError'
     | 'onConnected'
-    | 'onDisconnected';
+    | 'onDisconnected'
+    | 'onTranscriptionCompleted'
+    | 'onTranscriptionFailed';
 
 export type WebSocketEventHandler = (data: any) => void;
 export type WebSocketEventHandlers = Record<WebSocketEventName, WebSocketEventHandler[]>;
@@ -128,6 +130,10 @@ export type MessageType =
     // Ping / Pong
     | 'PING'
     | 'PONG'
+    // Transcription events
+    | 'TRANSCRIPTION_STARTED'
+    | 'TRANSCRIPTION_COMPLETED'
+    | 'TRANSCRIPTION_FAILED'
     // Custom game events
     | 'GAME_EVENT';
 
@@ -312,6 +318,37 @@ export interface ChatEntry {
     text: string;
     id?: string;
     timestamp?: Date | number;
+}
+
+// ── Speaker / Transcription types ──
+
+/**
+ * Metadata about the Foundry VTT user who was speaking when audio was recorded.
+ * Sent alongside audio to the backend so every transcript has attribution.
+ */
+export interface SpeakerContext {
+    /** Foundry user ID */
+    userId: string;
+    /** Foundry user display name */
+    userName: string;
+    /** True if the user is the GM */
+    isGM: boolean;
+    /** Actor ID assigned to this user in the current world */
+    characterId: string | null;
+    /** Actor name */
+    characterName: string | null;
+    /** Actor type (e.g. "character", "npc") */
+    characterType: string | null;
+    /** Foundry world ID */
+    worldId: string | null;
+    /** Active scene name at time of recording */
+    sceneName: string | null;
+    /** Game system ID (e.g. "dnd5e", "pf2e") */
+    systemId: string | null;
+    /** WebSocket session ID for result routing */
+    sessionId: string;
+    /** AV source that detected the speech ("livekit", "dom-observer") */
+    avSource: string;
 }
 
 export interface BookInfo {

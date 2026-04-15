@@ -65,6 +65,9 @@ game-master:
   chat:
     default-language: catalan
     default-model: gpt-4.1-mini
+  transcription:
+    model: whisper-1
+    language: ""
   ingestion:
     enable-rate-limit: false
     rpm-limit: 90

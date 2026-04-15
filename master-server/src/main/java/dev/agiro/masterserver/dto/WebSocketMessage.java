@@ -64,7 +64,9 @@ public class WebSocketMessage {
         INGESTION_FAILED,
 
         // Transcription events
+        TRANSCRIPTION_STARTED,
         TRANSCRIPTION_COMPLETED,
+        TRANSCRIPTION_FAILED,
 
         // Combat events (Phase 2)
         ENCOUNTER_GENERATION_STARTED,
