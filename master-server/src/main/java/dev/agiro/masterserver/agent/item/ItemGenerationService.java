@@ -182,7 +182,7 @@ public class ItemGenerationService {
 
         // RAG item examples
         if (request.getSystemId() != null) {
-            String itemContext = ragService.searchItemContext(
+            String itemContext = ragService.searchItemContextWithCompendium(
                     request.getPrompt(),
                     request.getSystemId(),
                     request.getWorldId(),

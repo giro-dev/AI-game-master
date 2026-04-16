@@ -223,8 +223,8 @@ public class FieldFillerAgent {
         try {
             String query = group.getName() + " " + concept.getOrDefault("name", "") + " " + concept.getOrDefault("concept", "");
             return switch (group.getCategory()) {
-                case "attributes" -> ragService.searchCharacterCreationContext(query, systemId, worldId, 3);
-                case "skills"     -> ragService.searchCharacterCreationContext("skills proficiencies " + query, systemId, worldId, 3);
+                case "attributes" -> ragService.searchCharacterCreationContextWithCompendium(query, systemId, worldId, 3);
+                case "skills"     -> ragService.searchCharacterCreationContextWithCompendium("skills proficiencies " + query, systemId, worldId, 3);
                 case "combat"     -> ragService.searchRulesContext("combat stats defense attack " + query, systemId, 3);
                 default           -> "";
             };

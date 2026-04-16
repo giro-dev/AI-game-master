@@ -115,9 +115,12 @@ public class ItemGenerationAgent {
 
         // RAG item examples
         if (systemId != null) {
-            String itemContext = ragService.searchItemContext(
+            String itemContext = ragService.searchItemContextWithCompendium(
                     "items equipment for " + coreConcept.getOrDefault("concept", request.getPrompt()),
-                    systemId, request.getWorldId(), 4);
+                    systemId,
+                    request.getWorldId(),
+                    4
+            );
             if (!itemContext.isBlank()) {
                 sb.append("=== SYSTEM ITEM EXAMPLES ===\n")
                   .append(truncate(itemContext, 2000)).append("\n\n");

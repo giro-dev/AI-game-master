@@ -133,7 +133,12 @@ public class ConceptAgent {
         // 3. RAG rules context
         String systemId = request.getBlueprint() != null ? request.getBlueprint().getSystemId() : null;
         if (systemId != null) {
-            String rules = ragService.searchCharacterCreationContext(request.getPrompt(), systemId, request.getWorldId(), 5);
+            String rules = ragService.searchCharacterCreationContextWithCompendium(
+                    request.getPrompt(),
+                    systemId,
+                    request.getWorldId(),
+                    5
+            );
             if (!rules.isBlank()) {
                 sb.append("=== RULES FROM MANUALS ===\n").append(truncate(rules, 3000)).append("\n\n");
             }

@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 public class RAGService {
 
     private static final String VECTOR_INDEX = "vector-store";
+    private static final int MIN_COMPENDIUM_TOP_K = 2;
 
     private final VectorStore vectorStore;
     private final OpenSearchClient openSearchClient;
@@ -54,9 +55,9 @@ public class RAGService {
     /**
      * Search for character creation rules and compendium entities scoped to a world.
      */
-    public String searchCharacterCreationContext(String query, String systemId, String worldId, int topK) {
+    public String searchCharacterCreationContextWithCompendium(String query, String systemId, String worldId, int topK) {
         String rules = search(query, systemId, "character_creation", worldId, topK);
-        String entities = searchExtractedEntities(query, systemId, worldId, null, Math.max(2, topK / 2));
+        String entities = searchExtractedEntities(query, systemId, worldId, null, compendiumTopK(topK));
         return mergeContexts(rules, entities);
     }
 
@@ -78,9 +79,9 @@ public class RAGService {
     /**
      * Search for item definitions and compendium entities scoped to a world.
      */
-    public String searchItemContext(String query, String systemId, String worldId, int topK) {
+    public String searchItemContextWithCompendium(String query, String systemId, String worldId, int topK) {
         String itemDefinitions = search(query, systemId, "item_definition", worldId, topK);
-        String entities = searchExtractedEntities(query, systemId, worldId, null, Math.max(2, topK / 2));
+        String entities = searchExtractedEntities(query, systemId, worldId, null, compendiumTopK(topK));
         return mergeContexts(itemDefinitions, entities);
     }
 
@@ -198,5 +199,9 @@ public class RAGService {
                 .filter(c -> c != null && !c.isBlank())
                 .distinct()
                 .collect(Collectors.joining("\n\n---\n\n"));
+    }
+
+    private int compendiumTopK(int topK) {
+        return Math.max(MIN_COMPENDIUM_TOP_K, (topK + 1) / 2);
     }
 }
