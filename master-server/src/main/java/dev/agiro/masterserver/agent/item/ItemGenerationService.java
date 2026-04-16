@@ -182,7 +182,12 @@ public class ItemGenerationService {
 
         // RAG item examples
         if (request.getSystemId() != null) {
-            String itemContext = ragService.searchItemContext(request.getPrompt(), request.getSystemId(), 4);
+            String itemContext = ragService.searchItemContext(
+                    request.getPrompt(),
+                    request.getSystemId(),
+                    request.getWorldId(),
+                    4
+            );
             if (!itemContext.isBlank()) {
                 sb.append("=== ITEM EXAMPLES FROM MANUALS ===\n")
                   .append(truncate(itemContext, 2000)).append("\n\n");

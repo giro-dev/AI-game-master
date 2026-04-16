@@ -52,6 +52,15 @@ public class RAGService {
     }
 
     /**
+     * Search for character creation rules and compendium entities scoped to a world.
+     */
+    public String searchCharacterCreationContext(String query, String systemId, String worldId, int topK) {
+        String rules = search(query, systemId, "character_creation", worldId, topK);
+        String entities = searchExtractedEntities(query, systemId, worldId, null, Math.max(2, topK / 2));
+        return mergeContexts(rules, entities);
+    }
+
+    /**
      * Search for extracted entities (stat blocks, items, spells…).
      */
     public String searchExtractedEntities(String query, String systemId, String worldId, String bookId, int topK) {
@@ -64,6 +73,15 @@ public class RAGService {
      */
     public String searchItemContext(String query, String systemId, int topK) {
         return search(query, systemId, "item_definition", null, topK);
+    }
+
+    /**
+     * Search for item definitions and compendium entities scoped to a world.
+     */
+    public String searchItemContext(String query, String systemId, String worldId, int topK) {
+        String itemDefinitions = search(query, systemId, "item_definition", worldId, topK);
+        String entities = searchExtractedEntities(query, systemId, worldId, null, Math.max(2, topK / 2));
+        return mergeContexts(itemDefinitions, entities);
     }
 
     /**
@@ -173,5 +191,12 @@ public class RAGService {
             log.debug("OpenSearch term query failed for {}={}: {}", field, value, e.getMessage());
             return List.of();
         }
+    }
+
+    private String mergeContexts(String... contexts) {
+        return java.util.Arrays.stream(contexts)
+                .filter(c -> c != null && !c.isBlank())
+                .distinct()
+                .collect(Collectors.joining("\n\n---\n\n"));
     }
 }

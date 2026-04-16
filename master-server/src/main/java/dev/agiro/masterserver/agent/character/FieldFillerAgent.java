@@ -142,7 +142,7 @@ public class FieldFillerAgent {
         String fieldDescriptions = buildFieldDescriptions(group.getFieldPaths(), request);
 
         // Optional RAG context for specific field categories
-        String ragContext = fetchGroupContext(group, systemId, coreConcept);
+        String ragContext = fetchGroupContext(group, systemId, request.getWorldId(), coreConcept);
         String ragSection = ragContext.isBlank() ? "" :
                 "REFERENCE RULES/EXAMPLES:\n" + truncate(ragContext, 1500);
 
@@ -219,12 +219,12 @@ public class FieldFillerAgent {
         return sb.toString();
     }
 
-    private String fetchGroupContext(SystemProfileDto.FieldGroup group, String systemId, Map<String, Object> concept) {
+    private String fetchGroupContext(SystemProfileDto.FieldGroup group, String systemId, String worldId, Map<String, Object> concept) {
         try {
             String query = group.getName() + " " + concept.getOrDefault("name", "") + " " + concept.getOrDefault("concept", "");
             return switch (group.getCategory()) {
-                case "attributes" -> ragService.searchCharacterCreationContext(query, systemId, 3);
-                case "skills"     -> ragService.searchCharacterCreationContext("skills proficiencies " + query, systemId, 3);
+                case "attributes" -> ragService.searchCharacterCreationContext(query, systemId, worldId, 3);
+                case "skills"     -> ragService.searchCharacterCreationContext("skills proficiencies " + query, systemId, worldId, 3);
                 case "combat"     -> ragService.searchRulesContext("combat stats defense attack " + query, systemId, 3);
                 default           -> "";
             };
