@@ -36,6 +36,28 @@ services:
     depends_on:
       - opensearch
 
+  whisper:
+    build:
+      context: ../whisper-service
+      dockerfile: Dockerfile
+    environment:
+      - WHISPER_MODEL=large-v3
+      - WHISPER_DEVICE=cuda
+      - WHISPER_COMPUTE_TYPE=float16
+      - WHISPER_LANGUAGE=ca
+    ports:
+      - "9000:9000"
+    volumes:
+      - whisper-cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 volumes:
   postgres-data:
   opensearch-data:
+  whisper-cache:

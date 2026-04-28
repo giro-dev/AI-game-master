@@ -56,6 +56,11 @@ spring:
       max-file-size: 50MB
       max-request-size: 50MB
 
+transcription:
+  whisper-url: http://localhost:9000
+  opensearch-url: http://localhost:9200
+  default-language: ca
+
 game-master:
   chat:
     default-language: catalan

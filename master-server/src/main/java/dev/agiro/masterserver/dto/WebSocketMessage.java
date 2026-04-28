@@ -63,7 +63,9 @@ public class WebSocketMessage {
         INGESTION_FAILED,
 
         // Transcription events
+        TRANSCRIPTION_STARTED,
         TRANSCRIPTION_COMPLETED,
+        TRANSCRIPTION_FAILED,
 
         // Generic notifications
         NOTIFICATION,

@@ -5,13 +5,17 @@ import dev.agiro.masterserver.dto.ItemGenerationRequest;
 import dev.agiro.masterserver.dto.ItemGenerationResponse;
 import dev.agiro.masterserver.dto.WebSocketMessage;
 import dev.agiro.masterserver.service.ItemGenerationService;
+import dev.agiro.masterserver.service.TranscriptionQueueService;
 import dev.agiro.masterserver.service.TranscriptionService;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+
+import java.util.Base64;
 
 /**
  * WebSocket controller for real-time bidirectional communication with Foundry VTT
@@ -24,15 +28,38 @@ public class WebSocketController {
     private final ItemGenerationService itemGenerationService;
     private final ObjectMapper objectMapper;
     private final TranscriptionService transcriptionService;
+    private final TranscriptionQueueService transcriptionQueueService;
 
     public WebSocketController(SimpMessagingTemplate messagingTemplate,
                                ItemGenerationService itemGenerationService,
                                ObjectMapper objectMapper,
-                               TranscriptionService transcriptionService) {
+                               TranscriptionService transcriptionService,
+                               TranscriptionQueueService transcriptionQueueService) {
         this.messagingTemplate = messagingTemplate;
         this.itemGenerationService = itemGenerationService;
         this.objectMapper = objectMapper;
         this.transcriptionService = transcriptionService;
+        this.transcriptionQueueService = transcriptionQueueService;
+    }
+
+    @PostConstruct
+    void initTranscriptionCallbacks() {
+        transcriptionQueueService.setOnTranscriptionComplete((sessionId, result) -> {
+            WebSocketMessage msg = WebSocketMessage.success(
+                    WebSocketMessage.MessageType.TRANSCRIPTION_COMPLETED,
+                    sessionId,
+                    result
+            );
+            sendTranscriptionUpdate(sessionId, msg);
+        });
+        transcriptionQueueService.setOnTranscriptionFailed((sessionId, error) -> {
+            WebSocketMessage msg = WebSocketMessage.error(
+                    WebSocketMessage.MessageType.TRANSCRIPTION_FAILED,
+                    sessionId,
+                    error
+            );
+            sendTranscriptionUpdate(sessionId, msg);
+        });
     }
 
     /**
@@ -92,19 +119,56 @@ public class WebSocketController {
     }
 
     /**
-     * Handle audio transcription requests
+     * Handle audio transcription requests.
+     * Payload is expected to be a base64-encoded audio string or a Map with
+     * "audio" (base64), optional "participantId", and optional "language" fields.
      */
     @MessageMapping("/audio/transcribe")
     public void handleAudioTranscription(@Payload WebSocketMessage message) {
         log.info("Audio transcription request received: {}", message.getSessionId());
-        byte[] audioData = (byte[]) message.getPayload();
-        String transcription = transcriptionService.transcribeAudio(audioData);
-        WebSocketMessage response = WebSocketMessage.success(
-                WebSocketMessage.MessageType.TRANSCRIPTION_COMPLETED,
+
+        sendTranscriptionUpdate(message.getSessionId(), WebSocketMessage.success(
+                WebSocketMessage.MessageType.TRANSCRIPTION_STARTED,
                 message.getSessionId(),
-                transcription
-        );
-        sendToSession(message.getSessionId(), response);
+                null
+        ));
+
+        try {
+            byte[] audioData;
+            String participantId = "unknown";
+
+            Object payload = message.getPayload();
+            if (payload instanceof String audioBase64) {
+                audioData = Base64.getDecoder().decode(audioBase64);
+            } else if (payload instanceof java.util.Map<?, ?> payloadMap) {
+                String audioBase64 = (String) payloadMap.get("audio");
+                if (audioBase64 == null) {
+                    throw new IllegalArgumentException("Missing 'audio' field in payload");
+                }
+                audioData = Base64.getDecoder().decode(audioBase64);
+                if (payloadMap.containsKey("participantId")) {
+                    participantId = String.valueOf(payloadMap.get("participantId"));
+                }
+            } else {
+                throw new IllegalArgumentException("Unsupported payload type: " + (payload != null ? payload.getClass().getName() : "null"));
+            }
+
+            TranscriptionQueueService.AudioFragment fragment = new TranscriptionQueueService.AudioFragment(
+                    message.getSessionId(),
+                    participantId,
+                    audioData,
+                    System.currentTimeMillis()
+            );
+            transcriptionQueueService.enqueueAudioFragment(fragment);
+
+        } catch (Exception e) {
+            log.error("Failed to process audio transcription request: {}", e.getMessage());
+            sendTranscriptionUpdate(message.getSessionId(), WebSocketMessage.error(
+                    WebSocketMessage.MessageType.TRANSCRIPTION_FAILED,
+                    message.getSessionId(),
+                    e.getMessage()
+            ));
+        }
     }
 
     /**
@@ -151,5 +215,13 @@ public class WebSocketController {
     public void sendIngestionUpdate(String sessionId, WebSocketMessage message) {
         log.info("Sending ingestion update to session {}: {}", sessionId, message.getType());
         messagingTemplate.convertAndSend("/queue/ingestion-" + sessionId, message);
+    }
+
+    /**
+     * Send transcription update
+     */
+    public void sendTranscriptionUpdate(String sessionId, WebSocketMessage message) {
+        log.debug("Sending transcription update to session {}: {}", sessionId, message.getType());
+        messagingTemplate.convertAndSend("/queue/transcription-" + sessionId, message);
     }
 }
