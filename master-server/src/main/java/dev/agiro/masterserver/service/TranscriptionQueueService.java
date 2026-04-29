@@ -1,6 +1,5 @@
 package dev.agiro.masterserver.service;
 
-import dev.agiro.masterserver.dto.TranscriptionResult;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,7 +21,7 @@ public class TranscriptionQueueService {
     private final BlockingQueue<AudioFragment> audioQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final TranscriptionService transcriptionService;
-    private volatile BiConsumer<String, TranscriptionResult> onTranscriptionComplete;
+    private volatile BiConsumer<String, String> onTranscriptionComplete;
     private volatile BiConsumer<String, String> onTranscriptionFailed;
 
     public TranscriptionQueueService(TranscriptionService transcriptionService) {
@@ -30,7 +29,7 @@ public class TranscriptionQueueService {
         startProcessingQueue();
     }
 
-    public void setOnTranscriptionComplete(BiConsumer<String, TranscriptionResult> callback) {
+    public void setOnTranscriptionComplete(BiConsumer<String, String> callback) {
         this.onTranscriptionComplete = callback;
     }
 
@@ -65,9 +64,9 @@ public class TranscriptionQueueService {
             log.info("Processing audio fragment: session={}, participant={}, size={} bytes",
                     fragment.getSessionId(), fragment.getParticipantId(), fragment.getAudioData().length);
 
-            TranscriptionResult result = transcriptionService.transcribeAudio(fragment.getAudioData());
+            String text = transcriptionService.transcribeAudio(fragment.getAudioData());
 
-            if (result == null || result.getText() == null || result.getText().isBlank()) {
+            if (text == null || text.isBlank()) {
                 log.warn("Empty transcription result for session={}", fragment.getSessionId());
                 notifyFailed(fragment.getSessionId(), "Empty transcription result");
                 return;
@@ -75,7 +74,7 @@ public class TranscriptionQueueService {
 
             transcriptionService.saveTranscription(
                     transcriptionId,
-                    result,
+                    text,
                     Map.of(
                             "sessionId", fragment.getSessionId(),
                             "participantId", fragment.getParticipantId(),
@@ -83,7 +82,7 @@ public class TranscriptionQueueService {
                     )
             );
 
-            notifyComplete(fragment.getSessionId(), result);
+            notifyComplete(fragment.getSessionId(), text);
 
         } catch (IOException e) {
             log.error("Failed to save transcription for session={}: {}", fragment.getSessionId(), e.getMessage());
@@ -94,10 +93,10 @@ public class TranscriptionQueueService {
         }
     }
 
-    private void notifyComplete(String sessionId, TranscriptionResult result) {
+    private void notifyComplete(String sessionId, String text) {
         if (onTranscriptionComplete != null) {
             try {
-                onTranscriptionComplete.accept(sessionId, result);
+                onTranscriptionComplete.accept(sessionId, text);
             } catch (Exception e) {
                 log.error("Error in transcription complete callback: {}", e.getMessage());
             }

@@ -6,7 +6,6 @@ import dev.agiro.masterserver.dto.ItemGenerationResponse;
 import dev.agiro.masterserver.dto.WebSocketMessage;
 import dev.agiro.masterserver.service.ItemGenerationService;
 import dev.agiro.masterserver.service.TranscriptionQueueService;
-import dev.agiro.masterserver.service.TranscriptionService;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -27,18 +26,15 @@ public class WebSocketController {
     private final SimpMessagingTemplate messagingTemplate;
     private final ItemGenerationService itemGenerationService;
     private final ObjectMapper objectMapper;
-    private final TranscriptionService transcriptionService;
     private final TranscriptionQueueService transcriptionQueueService;
 
     public WebSocketController(SimpMessagingTemplate messagingTemplate,
                                ItemGenerationService itemGenerationService,
                                ObjectMapper objectMapper,
-                               TranscriptionService transcriptionService,
                                TranscriptionQueueService transcriptionQueueService) {
         this.messagingTemplate = messagingTemplate;
         this.itemGenerationService = itemGenerationService;
         this.objectMapper = objectMapper;
-        this.transcriptionService = transcriptionService;
         this.transcriptionQueueService = transcriptionQueueService;
     }
 
