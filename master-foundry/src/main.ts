@@ -10,6 +10,7 @@ import { WebSocketClient } from './websocket-client.js';
 import { SystemSnapshotSender } from './system-snapshot/snapshot-sender.js';
 import { PostProcessingEngine } from './system-snapshot/post-processor.js';
 import { AIGameMasterPanel } from './ui/ai-game-master-panel.js';
+import { SystemSkillRegistry } from './skills/system-skill.js';
 
 const SERVER = 'http://localhost:8080';
 
@@ -25,6 +26,7 @@ Hooks.on('ready', () => {
     let snapshotSender: SystemSnapshotSender | null = null;
     let postProcessor: PostProcessingEngine | null = null;
     let panel: AIGameMasterPanel | null = null;
+    let skillRegistry: SystemSkillRegistry | null = null;
 
     try {
         // Register settings (safe to call multiple times in same session)
@@ -41,8 +43,17 @@ Hooks.on('ready', () => {
         console.warn('[AI-GM] Settings registration failed (may already exist):', e);
     }
 
+    // ── Skill Registry — per-system declarative adapters ──
+    try {
+        skillRegistry = new SystemSkillRegistry();
+        skillRegistry.init(game.system.id, game.world?.id ?? '');
+    } catch (e) {
+        console.error('[AI-GM] SkillRegistry init failed:', e);
+    }
+
     try {
         blueprintGenerator = new BlueprintGenerator();
+        if (skillRegistry) blueprintGenerator.setSkillRegistry(skillRegistry);
     } catch (e) {
         console.error('[AI-GM] BlueprintGenerator init failed:', e);
     }
@@ -73,6 +84,7 @@ Hooks.on('ready', () => {
         wsClient,
         snapshotSender,
         postProcessor,
+        skillRegistry,
         panel,
         open(): void {
             if (panel) {

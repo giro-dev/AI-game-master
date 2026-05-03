@@ -6,6 +6,7 @@
  */
 
 import type { ActorSchema, FieldDefinition, ActorTypeCache, CachedSchema } from '../types/index.js';
+import type { SystemSkillRegistry } from '../skills/system-skill.js';
 
 interface ItemSchemaResult {
     systemId: string;
@@ -24,6 +25,9 @@ interface ItemTypeSchema {
 export class SchemaExtractor {
     public readonly systemId: string;
     public readonly systemVersion: string;
+
+    /** Optional skill registry — provides per-system overrides. */
+    private skillRegistry: SystemSkillRegistry | null = null;
 
     // Cache with TTL
     private static readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -47,6 +51,15 @@ export class SchemaExtractor {
             const source = hasDataModels ? 'CONFIG.*.dataModels' : hasGameModel ? 'game.model' : 'game.system.model';
             console.log(`[Schema Extractor] Initialized: ${this.systemId} (source: ${source})`);
         }
+    }
+
+    /**
+     * Attach a skill registry for per-system overrides.
+     * Call after construction, before any schema queries.
+     */
+    setSkillRegistry(registry: SystemSkillRegistry): void {
+        this.skillRegistry = registry;
+        this.clearCache();
     }
 
     /**
@@ -179,20 +192,29 @@ export class SchemaExtractor {
                 if (dataModel) {
                     const fields = this.extractFromDataModel(dataModel, 'system');
                     if (fields.length > 0) {
-                        schemas[itemType] = fields;
+                        schemas[itemType] = this._applySkillFieldOverrides(fields, itemType, 'item');
                         continue;
                     }
                 }
 
                 // v12+: game.model
                 if (game.model?.Item?.[itemType]) {
-                    schemas[itemType] = this.normalizeSchema(game.model.Item[itemType], 'system');
+                    schemas[itemType] = this._applySkillFieldOverrides(
+                        this.normalizeSchema(game.model.Item[itemType], 'system'), itemType, 'item');
                     continue;
                 }
 
                 // Legacy: game.system.model
                 if (game.system?.model?.Item?.[itemType]) {
-                    schemas[itemType] = this.normalizeSchema(game.system.model.Item[itemType], 'system');
+                    schemas[itemType] = this._applySkillFieldOverrides(
+                        this.normalizeSchema(game.system.model.Item[itemType], 'system'), itemType, 'item');
+                    continue;
+                }
+
+                // Skill-only fields (no auto-detected schema)
+                const skillOnly = this._applySkillFieldOverrides([], itemType, 'item');
+                if (skillOnly.length > 0) {
+                    schemas[itemType] = skillOnly;
                     continue;
                 }
 
@@ -214,37 +236,33 @@ export class SchemaExtractor {
      * Extract schema for a specific item type
      */
     extractItemType(itemType: string): ItemTypeSchema {
+        let fields: FieldDefinition[] = [];
+
         // v14+: TypeDataModel via CONFIG.Item.dataModels
         const dataModel = CONFIG.Item?.dataModels?.[itemType];
         if (dataModel) {
-            const fields = this.extractFromDataModel(dataModel, 'system');
-            if (fields.length > 0) {
-                return { systemId: this.systemId, itemType, fields, timestamp: Date.now() };
-            }
+            fields = this.extractFromDataModel(dataModel, 'system');
         }
 
         // v12+: game.model
-        if (game.model?.Item?.[itemType]) {
-            return {
-                systemId: this.systemId,
-                itemType,
-                fields: this.normalizeSchema(game.model.Item[itemType], 'system'),
-                timestamp: Date.now()
-            };
+        if (fields.length === 0 && game.model?.Item?.[itemType]) {
+            fields = this.normalizeSchema(game.model.Item[itemType], 'system');
         }
 
         // Legacy: game.system.model
         const itemModel = game.system?.model?.Item as Record<string, any> | undefined;
-        if (itemModel?.[itemType]) {
-            return {
-                systemId: this.systemId,
-                itemType,
-                fields: this.normalizeSchema(itemModel[itemType], 'system'),
-                timestamp: Date.now()
-            };
+        if (fields.length === 0 && itemModel?.[itemType]) {
+            fields = this.normalizeSchema(itemModel[itemType], 'system');
         }
 
-        throw new Error(`Item type "${itemType}" not found in system ${this.systemId}`);
+        // Apply skill overrides
+        fields = this._applySkillFieldOverrides(fields, itemType, 'item');
+
+        if (fields.length === 0) {
+            throw new Error(`Item type "${itemType}" not found in system ${this.systemId}`);
+        }
+
+        return { systemId: this.systemId, itemType, fields, timestamp: Date.now() };
     }
 
     /**
@@ -273,31 +291,31 @@ export class SchemaExtractor {
         // v14+: CONFIG.Actor.dataModels is authoritative for TypeDataModel-based systems
         if (CONFIG.Actor?.dataModels && Object.keys(CONFIG.Actor.dataModels).length > 0) {
             console.log('[Schema Extractor] Using CONFIG.Actor.dataModels for actor types');
-            return Object.keys(CONFIG.Actor.dataModels);
+            return this._appendSkillActorTypes(Object.keys(CONFIG.Actor.dataModels));
         }
 
         // v12+: game.model (moved from game.system.model)
         if (game.model?.Actor) {
             console.log('[Schema Extractor] Using game.model.Actor for actor types');
-            return Object.keys(game.model.Actor);
+            return this._appendSkillActorTypes(Object.keys(game.model.Actor));
         }
 
         // Legacy (v11 and earlier): game.system.model
         if (game.system?.model?.Actor) {
             console.log('[Schema Extractor] Using legacy game.system.model.Actor for actor types');
-            return Object.keys(game.system.model.Actor);
+            return this._appendSkillActorTypes(Object.keys(game.system.model.Actor));
         }
 
         // Fallback: CONFIG.Actor.typeLabels
         if (CONFIG.Actor?.typeLabels) {
             console.log('[Schema Extractor] Using CONFIG.Actor.typeLabels for actor types');
-            return Object.keys(CONFIG.Actor.typeLabels);
+            return this._appendSkillActorTypes(Object.keys(CONFIG.Actor.typeLabels));
         }
 
         // Fallback: system documentTypes
         if (game.system?.documentTypes?.Actor) {
             console.log('[Schema Extractor] Using system.documentTypes.Actor for actor types');
-            return Object.keys(game.system.documentTypes.Actor);
+            return this._appendSkillActorTypes(Object.keys(game.system.documentTypes.Actor));
         }
 
         // Fallback: existing actors
@@ -306,11 +324,11 @@ export class SchemaExtractor {
             for (const actor of game.actors) {
                 types.add(actor.type);
             }
-            return Array.from(types);
+            return this._appendSkillActorTypes(Array.from(types));
         }
 
         console.warn('[Schema Extractor] Could not determine actor types, falling back to ["character"]');
-        return ['character'];
+        return this._appendSkillActorTypes(['character']);
     }
 
     /**
@@ -320,34 +338,34 @@ export class SchemaExtractor {
         // v14+: CONFIG.Item.dataModels is authoritative for TypeDataModel-based systems
         if (CONFIG.Item?.dataModels && Object.keys(CONFIG.Item.dataModels).length > 0) {
             console.log('[Schema Extractor] Using CONFIG.Item.dataModels for item types');
-            return Object.keys(CONFIG.Item.dataModels);
+            return this._appendSkillItemTypes(Object.keys(CONFIG.Item.dataModels));
         }
 
         // v12+: game.model (moved from game.system.model)
         if (game.model?.Item) {
             console.log('[Schema Extractor] Using game.model.Item for item types');
-            return Object.keys(game.model.Item);
+            return this._appendSkillItemTypes(Object.keys(game.model.Item));
         }
 
         // Legacy (v11 and earlier): game.system.model
         if (game.system?.model?.Item) {
             console.log('[Schema Extractor] Using legacy game.system.model.Item for item types');
-            return Object.keys(game.system.model.Item);
+            return this._appendSkillItemTypes(Object.keys(game.system.model.Item));
         }
 
         if (CONFIG.Item?.typeLabels) {
             console.log('[Schema Extractor] Using CONFIG.Item.typeLabels for item types');
-            return Object.keys(CONFIG.Item.typeLabels);
+            return this._appendSkillItemTypes(Object.keys(CONFIG.Item.typeLabels));
         }
 
         // Fallback: system documentTypes
         if (game.system?.documentTypes?.Item) {
             console.log('[Schema Extractor] Using system.documentTypes.Item for item types');
-            return Object.keys(game.system.documentTypes.Item);
+            return this._appendSkillItemTypes(Object.keys(game.system.documentTypes.Item));
         }
 
         console.warn('[Schema Extractor] Could not determine item types');
-        return [];
+        return this._appendSkillItemTypes([]);
     }
 
     /**
@@ -388,14 +406,15 @@ export class SchemaExtractor {
      * Compute actor schema
      */
     private computeActorSchema(actorType: string): ActorSchema {
+        let fields: FieldDefinition[] = [];
+
         // v14+: TypeDataModel via CONFIG.Actor.dataModels
         const dataModel = CONFIG.Actor?.dataModels?.[actorType];
         if (dataModel) {
             try {
-                const schemaFields = this.extractFromDataModel(dataModel, 'system');
-                if (schemaFields.length > 0) {
-                    console.log(`[Schema Extractor] Extracted ${schemaFields.length} fields from TypeDataModel for ${actorType}`);
-                    return { type: actorType, fields: schemaFields };
+                fields = this.extractFromDataModel(dataModel, 'system');
+                if (fields.length > 0) {
+                    console.log(`[Schema Extractor] Extracted ${fields.length} fields from TypeDataModel for ${actorType}`);
                 }
             } catch (e) {
                 console.warn(`[Schema Extractor] TypeDataModel extraction failed for ${actorType}:`, e);
@@ -403,27 +422,26 @@ export class SchemaExtractor {
         }
 
         // v12+: game.model
-        if (game.model?.Actor?.[actorType]) {
-            return {
-                type: actorType,
-                fields: this.normalizeSchema(game.model.Actor[actorType], 'system')
-            };
+        if (fields.length === 0 && game.model?.Actor?.[actorType]) {
+            fields = this.normalizeSchema(game.model.Actor[actorType], 'system');
         }
 
         // Legacy: game.system.model
-        if (game.system?.model?.Actor?.[actorType]) {
+        if (fields.length === 0 && game.system?.model?.Actor?.[actorType]) {
             const actorModel = game.system.model.Actor as Record<string, any>;
-            return {
-                type: actorType,
-                fields: this.normalizeSchema(actorModel[actorType], 'system')
-            };
+            fields = this.normalizeSchema(actorModel[actorType], 'system');
         }
 
-        console.warn(`[Schema Extractor] No model for ${actorType}, using fallback`);
-        return {
-            type: actorType,
-            fields: this.fallbackExtraction(actorType)
-        };
+        // Fallback: existing actors
+        if (fields.length === 0) {
+            console.warn(`[Schema Extractor] No model for ${actorType}, using fallback`);
+            fields = this.fallbackExtraction(actorType);
+        }
+
+        // Apply skill overrides (add/remove/patch fields)
+        fields = this._applySkillFieldOverrides(fields, actorType, 'actor');
+
+        return { type: actorType, fields };
     }
 
     /**
@@ -677,6 +695,51 @@ export class SchemaExtractor {
             .replace(/_/g, ' ')
             .replace(/^./, char => char.toUpperCase())
             .trim();
+    }
+
+    /* ── Skill integration helpers ── */
+
+    /** Append extra actor types from active skills. */
+    private _appendSkillActorTypes(types: string[]): string[] {
+        if (!this.skillRegistry) return types;
+        const extras = this.skillRegistry.getExtraActorTypes();
+        for (const t of extras) {
+            if (!types.includes(t)) types.push(t);
+        }
+        return types;
+    }
+
+    /** Append extra item types from active skills. */
+    private _appendSkillItemTypes(types: string[]): string[] {
+        if (!this.skillRegistry) return types;
+        const extras = this.skillRegistry.getExtraItemTypes();
+        for (const t of extras) {
+            if (!types.includes(t)) types.push(t);
+        }
+        return types;
+    }
+
+    /** Apply add/remove/patch field overrides from active skills. */
+    private _applySkillFieldOverrides(
+        fields: FieldDefinition[],
+        typeId: string,
+        kind: 'actor' | 'item'
+    ): FieldDefinition[] {
+        if (!this.skillRegistry) return fields;
+
+        const overrides = kind === 'actor'
+            ? this.skillRegistry.getMergedActorOverrides(typeId)
+            : this.skillRegistry.getMergedItemOverrides(typeId);
+
+        const hasOverrides =
+            (overrides.addFields?.length ?? 0) > 0 ||
+            (overrides.removeFields?.length ?? 0) > 0 ||
+            Object.keys(overrides.patchFields ?? {}).length > 0;
+
+        if (!hasOverrides) return fields;
+
+        console.log(`[Schema Extractor] Applying skill overrides for ${kind}:${typeId}`);
+        return this.skillRegistry.applyFieldOverrides(fields, overrides);
     }
 }
 

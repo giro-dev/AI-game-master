@@ -331,6 +331,49 @@
       </p>
       {{/if}}
 
+      <h4 class="section-header">System Skills</h4>
+      <p class="hint">Skills are per-system adapters that fine-tune schema extraction and AI generation. Import a JSON skill or create one to customize behaviour for non-standard systems.</p>
+
+      <div class="skill-list" id="gm-skill-list">
+        {{#each skills}}
+        <div class="skill-entry {{#unless this.enabled}}skill-disabled{{/unless}}" data-skill-id="{{this.id}}">
+          <div class="skill-info">
+            <strong>{{this.name}}</strong>
+            <span class="skill-meta">{{this.systemId}}{{#if this.worldId}} / {{this.worldId}}{{/if}}</span>
+            {{#if this.description}}
+            <p class="hint" style="margin:2px 0 0;">{{this.description}}</p>
+            {{/if}}
+          </div>
+          <div class="skill-actions">
+            <button type="button" class="btn btn-sm" data-action="toggle-skill" data-skill-id="{{this.id}}" title="{{#if this.enabled}}Disable{{else}}Enable{{/if}}">
+              <i class="fas {{#if this.enabled}}fa-toggle-on{{else}}fa-toggle-off{{/if}}"></i>
+            </button>
+            <button type="button" class="btn btn-sm" data-action="edit-skill" data-skill-id="{{this.id}}" title="Edit JSON">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-danger" data-action="delete-skill" data-skill-id="{{this.id}}" title="Remove">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </div>
+        {{/each}}
+        {{#unless skills.length}}
+        <p class="empty-state">No skills loaded. Import a JSON skill file or create one.</p>
+        {{/unless}}
+      </div>
+
+      <div class="btn-row" style="margin-top: 0.5rem;">
+        <button type="button" class="btn" data-action="import-skill">
+          <i class="fas fa-file-import"></i> Import Skill
+        </button>
+        <button type="button" class="btn" data-action="create-skill">
+          <i class="fas fa-plus"></i> New Skill
+        </button>
+        <button type="button" class="btn" data-action="export-skills">
+          <i class="fas fa-file-export"></i> Export All
+        </button>
+      </div>
+
       <h4 class="section-header">Connection</h4>
       <div class="profile-grid">
         <div class="profile-card">
