@@ -15,6 +15,7 @@ export class WebSocketClient {
     private readonly maxReconnectAttempts: number;
     private readonly reconnectDelay: number;
     private eventHandlers: WebSocketEventHandlers;
+    private adventureSessionId: string | null = null;
 
     constructor(serverUrl: string = 'http://localhost:8080') {
         this.serverUrl = serverUrl;
@@ -40,6 +41,14 @@ export class WebSocketClient {
             onIngestionProgress: [],
             onIngestionCompleted: [],
             onIngestionFailed: [],
+            onTranscriptionReceived: [],
+            onIntentConfirmationRequest: [],
+            onIntentConfirmed: [],
+            onIntentRejected: [],
+            onDirectorNarration: [],
+            onNpcDialogueAudio: [],
+            onSceneTransition: [],
+            onAdventureStateUpdate: [],
             onNotification: [],
             onError: [],
             onConnected: [],
@@ -407,6 +416,105 @@ export class WebSocketClient {
             }
         };
         return this.send(destination, message);
+    }
+
+    /* ─────────────── Adventure Director ─────────────── */
+
+    /**
+     * Subscribe to push events for a specific adventure session.
+     * Resolves anything previously subscribed before swapping in the new session.
+     */
+    subscribeToAdventure(adventureSessionId: string): void {
+        if (this.adventureSessionId === adventureSessionId) return;
+
+        if (this.adventureSessionId) {
+            this._unsubscribe(`/queue/adventure-${this.adventureSessionId}`);
+        }
+
+        this.adventureSessionId = adventureSessionId;
+
+        if (!this.connected) {
+            console.warn('[WebSocket] Not connected; will subscribe on next connect');
+            return;
+        }
+
+        this._subscribe(`/queue/adventure-${adventureSessionId}`, (message: any) => {
+            this._handleAdventureMessage(JSON.parse(message.body));
+        });
+    }
+
+    private _unsubscribe(destination: string): void {
+        const sub = this.subscriptions.get(destination);
+        if (sub) {
+            try { sub.unsubscribe(); } catch (_e) { /* noop */ }
+            this.subscriptions.delete(destination);
+        }
+    }
+
+    /**
+     * Handle adventure-related WebSocket messages.
+     */
+    private _handleAdventureMessage(message: any): void {
+        switch (message.type) {
+            case 'TRANSCRIPTION_RECEIVED':
+                this._triggerEvent('onTranscriptionReceived', message.payload);
+                break;
+            case 'INTENT_CONFIRMATION_REQUEST':
+                this._triggerEvent('onIntentConfirmationRequest', message.payload);
+                break;
+            case 'INTENT_CONFIRMED':
+                this._triggerEvent('onIntentConfirmed', message.payload);
+                break;
+            case 'INTENT_REJECTED':
+                this._triggerEvent('onIntentRejected', message.payload);
+                break;
+            case 'DIRECTOR_NARRATION':
+                this._triggerEvent('onDirectorNarration', message.payload);
+                break;
+            case 'NPC_DIALOGUE_AUDIO':
+                this._triggerEvent('onNpcDialogueAudio', message.payload);
+                break;
+            case 'SCENE_TRANSITION':
+                this._triggerEvent('onSceneTransition', message.payload);
+                break;
+            case 'ADVENTURE_STATE_UPDATE':
+                this._triggerEvent('onAdventureStateUpdate', message.payload);
+                break;
+        }
+    }
+
+    /**
+     * Send a transcription (or raw audio) for the AI Director to interpret.
+     */
+    sendTranscription(payload: {
+        transcription?: string;
+        audioBase64?: string;
+        adventureSessionId: string;
+        worldId?: string;
+        foundrySystem?: string;
+        playerName?: string;
+        worldState?: any;
+    }): boolean {
+        return this.send('/app/adventure/transcription', {
+            type: 'TRANSCRIPTION_RECEIVED',
+            payload
+        });
+    }
+
+    /**
+     * Confirm or reject a previously-asked intent confirmation.
+     */
+    confirmIntent(confirmed: boolean | string, adventureSessionId: string): boolean {
+        const response = typeof confirmed === 'string'
+            ? confirmed
+            : (confirmed ? 'yes' : 'no');
+        return this.send('/app/adventure/confirm', {
+            type: confirmed ? 'INTENT_CONFIRMED' : 'INTENT_REJECTED',
+            payload: {
+                adventureSessionId,
+                confirmationResponse: response
+            }
+        });
     }
 }
 

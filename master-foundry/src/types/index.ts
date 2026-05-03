@@ -89,6 +89,14 @@ export type WebSocketEventName =
     | 'onIngestionProgress'
     | 'onIngestionCompleted'
     | 'onIngestionFailed'
+    | 'onTranscriptionReceived'
+    | 'onIntentConfirmationRequest'
+    | 'onIntentConfirmed'
+    | 'onIntentRejected'
+    | 'onDirectorNarration'
+    | 'onNpcDialogueAudio'
+    | 'onSceneTransition'
+    | 'onAdventureStateUpdate'
     | 'onNotification'
     | 'onError'
     | 'onConnected'
@@ -120,6 +128,17 @@ export type MessageType =
     | 'INGESTION_PROGRESS'
     | 'INGESTION_COMPLETED'
     | 'INGESTION_FAILED'
+    // Transcription events
+    | 'TRANSCRIPTION_COMPLETED'
+    // Adventure Director events
+    | 'TRANSCRIPTION_RECEIVED'
+    | 'INTENT_CONFIRMATION_REQUEST'
+    | 'INTENT_CONFIRMED'
+    | 'INTENT_REJECTED'
+    | 'DIRECTOR_NARRATION'
+    | 'NPC_DIALOGUE_AUDIO'
+    | 'SCENE_TRANSITION'
+    | 'ADVENTURE_STATE_UPDATE'
     // Generic notifications
     | 'NOTIFICATION'
     | 'ERROR'
@@ -232,4 +251,69 @@ export interface BookInfo {
 export interface VTTAction {
     type: string;
     [key: string]: any;
+}
+
+// ── Adventure types ──
+
+export interface AdventureSummary {
+    id: string;
+    title: string;
+    system: string;
+    synopsis?: string;
+    actCount?: number;
+    npcCount?: number;
+    clueCount?: number;
+}
+
+export interface AdventureSceneInfo {
+    title: string;
+    readAloudText: string;
+}
+
+export interface AdventureStartResponse {
+    sessionId: string;
+    adventureId: string;
+    currentActId?: string;
+    currentSceneId?: string;
+    currentScene?: AdventureSceneInfo;
+}
+
+export interface NpcDialoguePayload {
+    npcId: string;
+    npcName?: string;
+    text: string;
+    voiceId?: string;
+    emotion?: string;
+    audioBase64?: string;
+}
+
+export interface IntentConfirmationPayload {
+    question: string;
+    reasoning?: string;
+}
+
+export interface DirectorNarrationPayload {
+    narration: string;
+    actions?: VTTAction[];
+    reasoning?: string;
+}
+
+export interface AdventureStateUpdatePayload {
+    discoveredClues?: string[];
+    npcDispositionChanges?: Record<string, string>;
+    transitionTriggered?: string;
+    tensionDelta?: number;
+}
+
+export interface AdventureSession {
+    id: string;
+    adventureModuleId: string;
+    worldId?: string;
+    currentActId?: string;
+    currentSceneId?: string;
+    discoveredClueIds?: string[];
+    metNpcIds?: string[];
+    npcDispositions?: Record<string, string>;
+    playerDecisionLog?: string[];
+    tensionLevel: number;
 }
