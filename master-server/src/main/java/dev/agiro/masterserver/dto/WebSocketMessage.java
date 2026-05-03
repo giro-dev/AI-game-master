@@ -60,10 +60,28 @@ public class WebSocketMessage {
         INGESTION_STARTED,
         INGESTION_PROGRESS,
         INGESTION_COMPLETED,
+        INGESTION_COMPENDIUM,
         INGESTION_FAILED,
 
         // Transcription events
+        TRANSCRIPTION_STARTED,
         TRANSCRIPTION_COMPLETED,
+        TRANSCRIPTION_FAILED,
+
+        // Combat events (Phase 2)
+        ENCOUNTER_GENERATION_STARTED,
+        ENCOUNTER_GENERATION_COMPLETED,
+        ENCOUNTER_GENERATION_FAILED,
+        COMBAT_ADVICE_COMPLETED,
+        LOOT_DISTRIBUTION_COMPLETED,
+
+        // World events (Phase 3)
+        LOCATION_GENERATION_STARTED,
+        LOCATION_GENERATION_COMPLETED,
+        LOCATION_GENERATION_FAILED,
+        WORLD_EVENT_LOGGED,
+        FACTION_UPDATED,
+        WORLD_CONTEXT_UPDATED,
 
         // Generic notifications
         NOTIFICATION,

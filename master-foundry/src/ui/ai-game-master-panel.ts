@@ -521,6 +521,14 @@ export class AIGameMasterPanel extends Application {
 
             ui.notifications.info(`Created: ${minimalActor.name}`);
             minimalActor.sheet.render(true);
+
+            // ── Register with CorrectionTracker so edits are sent as feedback ──
+            game.aiGM?.correctionTracker?.track(
+                minimalActor.id,
+                aiSystemData as Record<string, unknown>,
+                actorType,
+            );
+
             this.characterData = null;
             this.render(false);
         } catch (e: any) {

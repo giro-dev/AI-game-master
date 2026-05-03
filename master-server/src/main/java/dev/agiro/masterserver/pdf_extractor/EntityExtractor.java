@@ -50,19 +50,28 @@ public class EntityExtractor {
         List<Document> entityDocuments = new ArrayList<>();
 
         for (Document doc : classifiedDocuments) {
-            String chunkType = (String) doc.getMetadata().getOrDefault("chunk_type", "other");
-            if (!ENTITY_CHUNK_TYPES.contains(chunkType)) continue;
-
-            try {
-                List<Document> extracted = extractFromChunk(doc, chunkType);
-                entityDocuments.addAll(extracted);
-            } catch (Exception e) {
-                log.warn("Entity extraction failed for chunk {}: {}", doc.getId(), e.getMessage());
-            }
+            entityDocuments.addAll(extractFromDocument(doc));
         }
 
         log.info("Extracted {} entity documents from {} classified chunks", entityDocuments.size(), classifiedDocuments.size());
         return entityDocuments;
+    }
+
+    /**
+     * Extract entities from a single classified document.
+     *
+     * @return entity documents extracted from this chunk, or empty list if not entity-bearing
+     */
+    public List<Document> extractFromDocument(Document doc) {
+        String chunkType = (String) doc.getMetadata().getOrDefault("chunk_type", "other");
+        if (!ENTITY_CHUNK_TYPES.contains(chunkType)) return List.of();
+
+        try {
+            return extractFromChunk(doc, chunkType);
+        } catch (Exception e) {
+            log.warn("Entity extraction failed for chunk {}: {}", doc.getId(), e.getMessage());
+            return List.of();
+        }
     }
 
     private List<Document> extractFromChunk(Document sourceDoc, String chunkType) throws Exception {

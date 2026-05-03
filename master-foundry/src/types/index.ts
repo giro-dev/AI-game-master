@@ -88,11 +88,14 @@ export type WebSocketEventName =
     | 'onIngestionStarted'
     | 'onIngestionProgress'
     | 'onIngestionCompleted'
+    | 'onIngestionCompendium'
     | 'onIngestionFailed'
     | 'onNotification'
     | 'onError'
     | 'onConnected'
-    | 'onDisconnected';
+    | 'onDisconnected'
+    | 'onTranscriptionCompleted'
+    | 'onTranscriptionFailed';
 
 export type WebSocketEventHandler = (data: any) => void;
 export type WebSocketEventHandlers = Record<WebSocketEventName, WebSocketEventHandler[]>;
@@ -119,6 +122,7 @@ export type MessageType =
     | 'INGESTION_STARTED'
     | 'INGESTION_PROGRESS'
     | 'INGESTION_COMPLETED'
+    | 'INGESTION_COMPENDIUM'
     | 'INGESTION_FAILED'
     // Generic notifications
     | 'NOTIFICATION'
@@ -126,6 +130,10 @@ export type MessageType =
     // Ping / Pong
     | 'PING'
     | 'PONG'
+    // Transcription events
+    | 'TRANSCRIPTION_STARTED'
+    | 'TRANSCRIPTION_COMPLETED'
+    | 'TRANSCRIPTION_FAILED'
     // Custom game events
     | 'GAME_EVENT';
 
@@ -153,6 +161,21 @@ export interface SystemProfile {
     detectedConstraints?: SystemConstraint[];
     valueRanges?: Record<string, any>;
     characterCreationSteps?: string[];
+
+    /** Semantic mapping of system fields to universal RPG concepts */
+    semanticMap?: SemanticMap;
+
+    /** Detected roll mechanics for this system */
+    rollMechanics?: RollMechanics;
+
+    /** Overall confidence score (0-1) of the semantic mapping */
+    confidence?: number;
+
+    /** Example actor data used for few-shot generation */
+    actorExamples?: Record<string, unknown>[];
+
+    /** Example item data used for few-shot generation */
+    itemExamples?: Record<string, unknown>[];
 }
 
 // ── Blueprint types ──
@@ -212,6 +235,80 @@ export interface SystemSnapshot {
     valueDistributions: any;
     templateData: any;
     adapterHints: any;
+
+    /** Roll mechanics detected from items and CONFIG */
+    rollMechanics: RollMechanicsSnapshot | null;
+
+    /** Derived/computed fields detected on actor documents */
+    derivedFields: Record<string, DerivedFieldInfo[]>;
+}
+
+// ── Roll Mechanics types ──
+
+export interface RollMechanicsSnapshot {
+    /** Detected dice formula patterns (e.g. "1d20", "2d6", "Xd6") */
+    diceFormulas: string[];
+    /** Fields that appear to trigger or feed into rolls */
+    rollTriggerFields: RollTriggerField[];
+    /** Detected success model */
+    successModel: 'target_number' | 'count_hits' | 'opposed' | 'pbta' | 'unknown';
+    /** Whether skills are stored as embedded items (true in PF2e) or actor fields */
+    skillAsItem: boolean;
+}
+
+export interface RollTriggerField {
+    path: string;
+    type: string;
+    context: string; // e.g. "item action", "actor roll", "formula field"
+}
+
+export interface DerivedFieldInfo {
+    path: string;
+    isDerived: boolean;
+    sourceHint?: string; // e.g. "computed from abilities"
+}
+
+// ── Semantic Map types (returned from server) ──
+
+export type SemanticConcept =
+    | 'health' | 'health_secondary' | 'level' | 'experience'
+    | 'stat_strength' | 'stat_dexterity' | 'stat_constitution'
+    | 'stat_intelligence' | 'stat_wisdom' | 'stat_charisma'
+    | 'stat_generic'
+    | 'skill_rank' | 'roll_attribute'
+    | 'currency' | 'initiative' | 'armor_class'
+    | 'damage_formula' | 'action_trigger'
+    | 'movement_speed' | 'saving_throw'
+    | 'unknown';
+
+export interface FieldMapping {
+    path: string;
+    type: string;
+    range?: [number, number];
+    required: boolean;
+    inferredAs: SemanticConcept;
+    confidence: number;
+}
+
+export interface SemanticMap {
+    health?: FieldMapping;
+    healthSecondary?: FieldMapping;
+    level?: FieldMapping;
+    experience?: FieldMapping;
+    primaryStats: FieldMapping[];
+    skills: FieldMapping[];
+    rollAttribute?: FieldMapping;
+    currency: FieldMapping[];
+    initiative?: FieldMapping;
+    armorClass?: FieldMapping;
+    movementSpeed?: FieldMapping;
+}
+
+export interface RollMechanics {
+    formula: string;
+    successModel: 'target_number' | 'count_hits' | 'opposed' | 'pbta' | 'unknown';
+    modifierSource?: string;
+    skillAsItem: boolean;
 }
 
 // ── Chat / Session types ──
@@ -219,12 +316,81 @@ export interface SystemSnapshot {
 export interface ChatEntry {
     sender: string;
     text: string;
+    id?: string;
+    timestamp?: Date | number;
+}
+
+// ── Speaker / Transcription types ──
+
+/**
+ * Metadata about the Foundry VTT user who was speaking when audio was recorded.
+ * Sent alongside audio to the backend so every transcript has attribution.
+ */
+export interface SpeakerContext {
+    /** Foundry user ID */
+    userId: string;
+    /** Foundry user display name */
+    userName: string;
+    /** True if the user is the GM */
+    isGM: boolean;
+    /** Actor ID assigned to this user in the current world */
+    characterId: string | null;
+    /** Actor name */
+    characterName: string | null;
+    /** Actor type (e.g. "character", "npc") */
+    characterType: string | null;
+    /** Foundry world ID */
+    worldId: string | null;
+    /** Active scene name at time of recording */
+    sceneName: string | null;
+    /** Game system ID (e.g. "dnd5e", "pf2e") */
+    systemId: string | null;
+    /** WebSocket session ID for result routing */
+    sessionId: string;
+    /** AV source that detected the speech ("livekit", "dom-observer") */
+    avSource: string;
 }
 
 export interface BookInfo {
     id: string;
     title: string;
     [key: string]: any;
+}
+
+// ── Feedback / correction loop types ──
+
+/**
+ * Payload POSTed to POST /api/feedback/correction when the GM edits an AI-generated actor.
+ */
+export interface CorrectionPayload {
+    /** Foundry game system ID (e.g. "dnd5e") */
+    systemId: string;
+    /** Actor type (e.g. "character", "npc") */
+    actorType: string;
+    /** The actor's system data as it was when the AI generated it */
+    generatedData: Record<string, unknown>;
+    /** The actor's system data after the GM saved their edits */
+    editedData: Record<string, unknown>;
+    /**
+     * Dot-notation paths that changed, derived from Foundry's updateActor change delta.
+     * Example: ["system.attributes.hp.value", "system.abilities.str.value"]
+     */
+    changedPaths: string[];
+    /** Foundry user ID of the GM who made the edit */
+    userId: string;
+    /** WebSocket session ID */
+    sessionId: string;
+    /** Client-side epoch ms when the edit was committed */
+    timestamp: number;
+}
+
+/** Acknowledgement returned by POST /api/feedback/correction */
+export interface CorrectionAck {
+    correctionId: string;
+    systemId: string;
+    newConfidence: number;
+    reExtractionTriggered: boolean;
+    summary: string;
 }
 
 // ── Action types for session tab ──

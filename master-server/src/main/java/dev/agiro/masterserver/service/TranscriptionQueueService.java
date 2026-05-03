@@ -1,38 +1,57 @@
 package dev.agiro.masterserver.service;
 
+import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.Map;
-import java.io.IOException;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 
+@Slf4j
 @Service
 public class TranscriptionQueueService {
 
     private final BlockingQueue<AudioFragment> audioQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final TranscriptionService transcriptionService;
+    private volatile BiConsumer<String, String> onTranscriptionComplete;
+    private volatile BiConsumer<String, String> onTranscriptionFailed;
 
     public TranscriptionQueueService(TranscriptionService transcriptionService) {
         this.transcriptionService = transcriptionService;
         startProcessingQueue();
     }
 
+    public void setOnTranscriptionComplete(BiConsumer<String, String> callback) {
+        this.onTranscriptionComplete = callback;
+    }
+
+    public void setOnTranscriptionFailed(BiConsumer<String, String> callback) {
+        this.onTranscriptionFailed = callback;
+    }
+
     public void enqueueAudioFragment(AudioFragment fragment) {
         audioQueue.offer(fragment);
+        log.debug("Enqueued audio fragment for session={}, queue size={}", fragment.getSessionId(), audioQueue.size());
     }
 
     private void startProcessingQueue() {
         executorService.submit(() -> {
-            while (true) {
+            log.info("Transcription queue processor started");
+            while (!Thread.currentThread().isInterrupted()) {
                 try {
                     AudioFragment fragment = audioQueue.take();
                     processAudioFragment(fragment);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    log.info("Transcription queue processor interrupted, shutting down");
                     break;
                 }
             }
@@ -40,18 +59,70 @@ public class TranscriptionQueueService {
     }
 
     private void processAudioFragment(AudioFragment fragment) {
+        String transcriptionId = UUID.randomUUID().toString();
         try {
-            String transcription = transcriptionService.transcribeAudio(fragment.getAudioData());
+            log.info("Processing audio fragment: session={}, participant={}, size={} bytes",
+                    fragment.getSessionId(), fragment.getParticipantId(), fragment.getAudioData().length);
+
+            String text = transcriptionService.transcribeAudio(fragment.getAudioData());
+
+            if (text == null || text.isBlank()) {
+                log.warn("Empty transcription result for session={}", fragment.getSessionId());
+                notifyFailed(fragment.getSessionId(), "Empty transcription result");
+                return;
+            }
+
             transcriptionService.saveTranscription(
-                fragment.getSessionId(),
-                transcription,
-                Map.of(
-                    "participantId", fragment.getParticipantId(),
-                    "timestamp", fragment.getTimestamp()
-                )
+                    transcriptionId,
+                    text,
+                    Map.of(
+                            "sessionId", fragment.getSessionId(),
+                            "participantId", fragment.getParticipantId(),
+                            "audioTimestamp", fragment.getTimestamp()
+                    )
             );
+
+            notifyComplete(fragment.getSessionId(), text);
+
         } catch (IOException e) {
-            e.printStackTrace(); // Log error
+            log.error("Failed to save transcription for session={}: {}", fragment.getSessionId(), e.getMessage());
+            notifyFailed(fragment.getSessionId(), "Failed to save: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("Transcription failed for session={}: {}", fragment.getSessionId(), e.getMessage(), e);
+            notifyFailed(fragment.getSessionId(), "Transcription error: " + e.getMessage());
+        }
+    }
+
+    private void notifyComplete(String sessionId, String text) {
+        if (onTranscriptionComplete != null) {
+            try {
+                onTranscriptionComplete.accept(sessionId, text);
+            } catch (Exception e) {
+                log.error("Error in transcription complete callback: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void notifyFailed(String sessionId, String error) {
+        if (onTranscriptionFailed != null) {
+            try {
+                onTranscriptionFailed.accept(sessionId, error);
+            } catch (Exception e) {
+                log.error("Error in transcription failed callback: {}", e.getMessage());
+            }
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Shutting down transcription queue service");
+        executorService.shutdownNow();
+        try {
+            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warn("Transcription executor did not terminate in time");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

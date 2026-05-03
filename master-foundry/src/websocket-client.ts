@@ -39,6 +39,7 @@ export class WebSocketClient {
             onIngestionStarted: [],
             onIngestionProgress: [],
             onIngestionCompleted: [],
+            onIngestionCompendium: [],
             onIngestionFailed: [],
             onNotification: [],
             onError: [],
@@ -265,6 +266,10 @@ export class WebSocketClient {
 
             case 'INGESTION_COMPLETED':
                 this._triggerEvent('onIngestionCompleted', message.payload);
+                break;
+
+            case 'INGESTION_COMPENDIUM':
+                this._triggerEvent('onIngestionCompendium', message.payload);
                 break;
 
             case 'INGESTION_FAILED':

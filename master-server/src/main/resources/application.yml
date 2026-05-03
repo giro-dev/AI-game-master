@@ -31,6 +31,14 @@ spring:
         options:
           model: text-embedding-3-small
         project-id: ${GM-PROJECT}
+      audio:
+        transcription:
+          base-url: ${WHISPER_BASE_URL:http://localhost:9000}
+          api-key: no-key-needed
+          options:
+            model: whisper-1
+            language: ca
+            response-format: json
     google:
       genai:
         api-key: ${GOOGLE_GENAI_API_KEY}
@@ -53,14 +61,34 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 300MB
+      max-request-size: 300MB
+
+server:
+  tomcat:
+    max-swallow-size: -1
+    max-http-form-post-size: -1
+
+transcription:
+  opensearch-url: http://localhost:9200
+  default-language: ca
 
 game-master:
   chat:
     default-language: catalan
     default-model: gpt-4.1-mini
-
+  transcription:
+    model: whisper-1
+    language: ""
+  ingestion:
+    enable-rate-limit: false
+    rpm-limit: 90
+    tpm-limit: 38000
+    max-retries: 5
+    chunk-size: 2000
+    min-chunk-size-chars: 300
+    min-chunk-length-to-embed: 50
+    window-minutes: 1
 
 logging:
   level:
