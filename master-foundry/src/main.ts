@@ -164,6 +164,29 @@ Hooks.on('ready', () => {
 
 Hooks.on('getSceneControlButtons', (controls: any) => {
     if (!game.user?.isGM) return;
+
+    // v13+/v14: controls is a Record<string, SceneControl> (object with named keys)
+    if (controls && typeof controls === 'object' && !Array.isArray(controls)) {
+        const tokenGroup = controls.tokens || controls.token;
+        if (tokenGroup?.tools) {
+            if (!tokenGroup.tools['ai-gm-open']) {
+                tokenGroup.tools['ai-gm-open'] = {
+                    name: 'ai-gm-open',
+                    title: 'AI Game Master',
+                    icon: 'fa-solid fa-hat-wizard',
+                    button: true,
+                    visible: game.user.isGM,
+                    onChange: () => {
+                        try { game.aiGM?.open(); }
+                        catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
+                    }
+                };
+            }
+        }
+        return;
+    }
+
+    // v11/v12: controls is an Array
     if (!Array.isArray(controls)) return;
 
     const aiTool = {
@@ -177,17 +200,14 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
         }
     };
 
-    // Try adding to the token controls (works in v11 and v12)
     const tokenGroup = controls.find((c: any) => c.name === 'token' || c.name === 'tokens');
     if (tokenGroup?.tools) {
-        // Avoid duplicates on re-render
         if (!tokenGroup.tools.find((t: any) => t.name === 'ai-gm-open')) {
             tokenGroup.tools.push(aiTool);
         }
         return;
     }
 
-    // Fallback: add as a standalone control group
     if (!controls.find((c: any) => c.name === 'ai-gm')) {
         controls.push({
             name: 'ai-gm',
@@ -216,18 +236,25 @@ Hooks.on('chatMessage', (_chatlog: any, message: string) => {
 /*  Actor context menu                                                    */
 /* ===================================================================== */
 
-Hooks.on('getActorDirectoryEntryContext', (_html: any, options: any[]) => {
+Hooks.on('getActorDirectoryEntryContext', (_appOrHtml: any, options: any[]) => {
+
+    // Helper to extract documentId from either jQuery (v11/v12) or HTMLElement (v13+/v14)
+    const getDocId = (li: any): string | null => {
+        if (typeof li.data === 'function') return li.data('documentId');          // jQuery
+        if (li instanceof HTMLElement) return li.dataset.documentId ?? null;       // v14 HTMLElement
+        return null;
+    };
 
     // ── Use as AI Reference Character ──
     options.push({
         name: 'AI: Use as Reference Character',
         icon: '<i class="fas fa-user-check"></i>',
         condition: (li: any) => {
-            const actor = game.actors.get(li.data('documentId'));
+            const actor = game.actors.get(getDocId(li));
             return actor && game.user.isGM;
         },
         callback: async (li: any) => {
-            const actor = game.actors.get(li.data('documentId'));
+            const actor = game.actors.get(getDocId(li));
             if (!actor) return;
 
             try {
@@ -266,11 +293,11 @@ Hooks.on('getActorDirectoryEntryContext', (_html: any, options: any[]) => {
         name: 'AI: Explain Character',
         icon: '<i class="fas fa-book-open"></i>',
         condition: (li: any) => {
-            const actor = game.actors.get(li.data('documentId'));
+            const actor = game.actors.get(getDocId(li));
             return actor && game.user.isGM;
         },
         callback: async (li: any) => {
-            const actor = game.actors.get(li.data('documentId'));
+            const actor = game.actors.get(getDocId(li));
             if (!actor) return;
             try {
                 const res = await fetch(`${SERVER}/gm/character/explain`, {
