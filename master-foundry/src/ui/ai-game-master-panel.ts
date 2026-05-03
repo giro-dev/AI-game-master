@@ -8,6 +8,8 @@
 import { FieldTreeBuilder } from '../utils/field-tree-builder.js';
 import { CharacterDataSanitizer } from '../utils/character-data-sanitizer.js';
 import { CharacterGenerationService } from '../services/character-generation-service.js';
+import { AudioCaptureService } from '../services/audio-capture-service.js';
+import { AudioPlaybackService } from '../services/audio-playback-service.js';
 import type { SystemSkill } from '../skills/system-skill.js';
 import type {
     FieldDefinition,
@@ -15,7 +17,14 @@ import type {
     ValidationError,
     ChatEntry,
     BookInfo,
-    VTTAction
+    VTTAction,
+    AdventureSummary,
+    AdventureSceneInfo,
+    AdventureStartResponse,
+    NpcDialoguePayload,
+    IntentConfirmationPayload,
+    DirectorNarrationPayload,
+    AdventureStateUpdatePayload
 } from '../types/index.js';
 
 const API = 'http://localhost:8080';
@@ -36,6 +45,22 @@ export class AIGameMasterPanel extends Application {
 
     // ── Library tab state ──
     private books: BookInfo[] = [];
+
+    // ── Adventure tab state ──
+    private adventures: AdventureSummary[] = [];
+    private selectedAdventureId: string | null = null;
+    private adventureSessionId: string | null = null;
+    private adventureScene: AdventureSceneInfo | null = null;
+    private discoveredClues: string[] = [];
+    private metNpcs: string[] = [];
+    private tensionLevel: number = 0;
+    private adventureLog: string[] = [];
+    private speakingNpc: NpcDialoguePayload | null = null;
+    private isRecording: boolean = false;
+    private isProcessing: boolean = false;
+    private _audioCapture: AudioCaptureService | null = null;
+    private _audioPlayback: AudioPlaybackService | null = null;
+    private _adventureHandlersRegistered: boolean = false;
 
     // ── Services ──
     private readonly _charService: CharacterGenerationService;
@@ -78,6 +103,7 @@ export class AIGameMasterPanel extends Application {
         }
 
         await this._refreshBooks();
+        await this._refreshAdventures();
 
         const ext = game.aiGM?.blueprintGenerator?.schemaExtractor;
         let actorTypes: string[] = ['character'];
@@ -159,7 +185,26 @@ export class AIGameMasterPanel extends Application {
                 systemId: s.systemId,
                 worldId: s.worldId ?? '',
                 enabled: s.enabled !== false
-            }))
+            })),
+
+            // Adventure tab
+            adventures: this.adventures.map(a => ({
+                ...a,
+                selected: a.id === this.selectedAdventureId
+            })),
+            adventureSelected: !!this.selectedAdventureId,
+            adventureSessionActive: !!this.adventureSessionId,
+            adventureSessionId: this.adventureSessionId,
+            adventureScene: this.adventureScene,
+            discoveredClues: this.discoveredClues,
+            metNpcs: this.metNpcs,
+            tensionLevel: this.tensionLevel,
+            tensionMax: 10,
+            tensionPct: Math.max(0, Math.min(100, Math.round((this.tensionLevel / 10) * 100))),
+            adventureLog: this.adventureLog,
+            speakingNpc: this.speakingNpc,
+            isRecording: this.isRecording,
+            isProcessing: this.isProcessing
         };
     }
 
@@ -233,6 +278,15 @@ export class AIGameMasterPanel extends Application {
         // Dynamic result-card buttons (delegated)
         html.find('#char-result').on('click', '[data-action="create-character"]', this._onCreateCharacter.bind(this));
         html.find('#char-result').on('click', '[data-action="export-json"]', this._onExportJSON.bind(this));
+
+        // ── Adventure tab ──
+        html.find('#adventure-select').on('change', this._onAdventureSelectChange.bind(this));
+        html.find('[data-action="upload-adventure"]').on('click', this._onUploadAdventure.bind(this));
+        html.find('[data-action="start-adventure"]').on('click', this._onStartAdventure.bind(this));
+        html.find('[data-action="toggle-mic"]').on('click', this._onToggleMic.bind(this));
+        html.find('[data-action="end-adventure"]').on('click', this._onEndAdventure.bind(this));
+
+        this._registerAdventureWsHandlers();
     }
 
     /* ================================================================== */
@@ -1459,6 +1513,269 @@ export class AIGameMasterPanel extends Application {
             default: 'save'
         }, { width: 560, height: 500 });
 
+        d.render(true);
+    }
+
+    /* ================================================================== */
+    /*  ADVENTURE TAB                                                      */
+    /* ================================================================== */
+
+    private async _refreshAdventures(): Promise<void> {
+        const worldId = game.world?.id;
+        if (!worldId) {
+            this.adventures = [];
+            return;
+        }
+        try {
+            const res = await fetch(`${API}/adventure/${encodeURIComponent(worldId)}`);
+            if (res.ok) {
+                const list = await res.json();
+                this.adventures = (list || []) as AdventureSummary[];
+                if (this.selectedAdventureId && !this.adventures.find(a => a.id === this.selectedAdventureId)) {
+                    this.selectedAdventureId = null;
+                }
+            } else {
+                this.adventures = [];
+            }
+        } catch (_e) {
+            // Server unreachable; leave list empty.
+            this.adventures = [];
+        }
+    }
+
+    private _onAdventureSelectChange(ev: any): void {
+        this.selectedAdventureId = ev.target?.value || null;
+        this.render(false);
+    }
+
+    private async _onUploadAdventure(_ev: any): Promise<void> {
+        const worldId = game.world?.id;
+        if (!worldId) {
+            ui.notifications.warn('No active world');
+            return;
+        }
+
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/pdf';
+        input.onchange = async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('foundrySystem', game.system?.id ?? '');
+            fd.append('worldId', worldId);
+            fd.append('bookTitle', file.name.replace(/\.pdf$/i, ''));
+
+            ui.notifications.info(`Ingerint aventura "${file.name}"...`);
+            try {
+                const res = await fetch(`${API}/adventure/upload`, { method: 'POST', body: fd });
+                if (!res.ok) {
+                    const errText = await res.text();
+                    ui.notifications.error(`Error ingerint aventura: ${errText}`);
+                    return;
+                }
+                const adventure = await res.json() as AdventureSummary;
+                ui.notifications.info(`Aventura "${adventure.title}" carregada`);
+                await this._refreshAdventures();
+                this.selectedAdventureId = adventure.id;
+                this.render(false);
+            } catch (e: any) {
+                ui.notifications.error(`Error pujant aventura: ${e?.message ?? e}`);
+            }
+        };
+        input.click();
+    }
+
+    private async _onStartAdventure(_ev: any): Promise<void> {
+        if (!this.selectedAdventureId) {
+            ui.notifications.warn('Selecciona una aventura primer');
+            return;
+        }
+        try {
+            const res = await fetch(`${API}/adventure/${encodeURIComponent(this.selectedAdventureId)}/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ worldId: game.world?.id })
+            });
+            if (!res.ok) {
+                ui.notifications.error(`No s'ha pogut iniciar la sessió: ${await res.text()}`);
+                return;
+            }
+            const data = await res.json() as AdventureStartResponse;
+            this.adventureSessionId = data.sessionId;
+            this.adventureScene = data.currentScene ?? null;
+            this.discoveredClues = [];
+            this.metNpcs = [];
+            this.tensionLevel = 0;
+            this.adventureLog = [];
+            this.speakingNpc = null;
+
+            game.aiGM?.wsClient?.subscribeToAdventure(data.sessionId);
+            this._initAdventureAudio();
+
+            ui.notifications.info('Aventura iniciada!');
+            this.render(false);
+        } catch (e: any) {
+            ui.notifications.error(`Error iniciant l'aventura: ${e?.message ?? e}`);
+        }
+    }
+
+    private _onEndAdventure(_ev: any): void {
+        this._audioCapture?.cancel();
+        this._audioPlayback?.stop();
+        this.adventureSessionId = null;
+        this.adventureScene = null;
+        this.discoveredClues = [];
+        this.metNpcs = [];
+        this.tensionLevel = 0;
+        this.adventureLog = [];
+        this.speakingNpc = null;
+        this.isRecording = false;
+        this.isProcessing = false;
+        this.render(false);
+    }
+
+    private async _onToggleMic(_ev: any): Promise<void> {
+        if (!this.adventureSessionId) {
+            ui.notifications.warn('Inicia una sessió d\'aventura primer');
+            return;
+        }
+        if (!this._audioCapture) this._initAdventureAudio();
+        try {
+            await this._audioCapture?.toggle();
+        } catch (e: any) {
+            ui.notifications.error(`Microphone error: ${e?.message ?? e}`);
+        }
+    }
+
+    private _initAdventureAudio(): void {
+        if (!this.adventureSessionId) return;
+        const ws = game.aiGM?.wsClient;
+        if (!ws) return;
+
+        this._audioCapture = new AudioCaptureService(ws, {
+            adventureSessionId: this.adventureSessionId,
+            worldId: game.world?.id ?? undefined,
+            foundrySystem: game.system?.id ?? undefined,
+            playerName: game.user?.name ?? undefined,
+            onStateChange: (recording) => {
+                this.isRecording = recording;
+                this.render(false);
+            },
+            onSubmitting: () => {
+                this.isProcessing = true;
+                this.render(false);
+            }
+        });
+
+        this._audioPlayback = new AudioPlaybackService({
+            onSpeakingChange: (npc) => {
+                this.speakingNpc = npc;
+                this.render(false);
+            }
+        });
+    }
+
+    private _registerAdventureWsHandlers(): void {
+        if (this._adventureHandlersRegistered) return;
+        const ws = game.aiGM?.wsClient;
+        if (!ws) return;
+
+        ws.on('onTranscriptionReceived', (data: any) => {
+            this.isProcessing = false;
+            if (data?.transcription) {
+                this.adventureLog.push(`Tu: ${data.transcription}`);
+                this.render(false);
+            }
+        });
+
+        ws.on('onDirectorNarration', (data: DirectorNarrationPayload) => {
+            this.isProcessing = false;
+            if (data?.narration) {
+                this.adventureLog.push(`Director: ${data.narration}`);
+                this.render(false);
+            }
+            // Apply VTT actions if any
+            if (Array.isArray(data?.actions) && data.actions.length) {
+                this._applyVttActions(data.actions);
+            }
+        });
+
+        ws.on('onNpcDialogueAudio', (data: NpcDialoguePayload) => {
+            if (data?.text) {
+                this.adventureLog.push(`${data.npcName ?? data.npcId}: ${data.text}`);
+            }
+            if (data?.audioBase64) {
+                this._audioPlayback?.enqueue(data);
+            } else {
+                this.render(false);
+            }
+        });
+
+        ws.on('onIntentConfirmationRequest', (data: IntentConfirmationPayload) => {
+            this.isProcessing = false;
+            this._showIntentConfirmationDialog(data);
+        });
+
+        ws.on('onSceneTransition', (data: any) => {
+            if (data?.title) this.adventureScene = { title: data.title, readAloudText: data.readAloudText ?? '' };
+            this.adventureLog.push(`— Transició: ${data?.title ?? data?.sceneId ?? '?'} —`);
+            this.render(false);
+        });
+
+        ws.on('onAdventureStateUpdate', (data: AdventureStateUpdatePayload) => {
+            if (Array.isArray(data?.discoveredClues)) {
+                for (const c of data.discoveredClues) {
+                    if (!this.discoveredClues.includes(c)) this.discoveredClues.push(c);
+                }
+            }
+            if (typeof data?.tensionDelta === 'number') {
+                this.tensionLevel = Math.max(0, Math.min(10, this.tensionLevel + data.tensionDelta));
+            }
+            this.render(false);
+        });
+
+        this._adventureHandlersRegistered = true;
+    }
+
+    private _applyVttActions(actions: VTTAction[]): void {
+        // Reuse the existing post-processor if available
+        try {
+            game.aiGM?.postProcessor?.applyActions?.(actions);
+        } catch (e) {
+            console.warn('[AI-GM Adventure] Failed to apply VTT actions:', e);
+        }
+    }
+
+    private _showIntentConfirmationDialog(data: IntentConfirmationPayload): void {
+        if (!this.adventureSessionId) return;
+        const sessionId = this.adventureSessionId;
+        const ws = game.aiGM?.wsClient;
+        if (!ws) return;
+
+        const d = new Dialog({
+            title: 'Confirmar intenció',
+            content: `<p>${this._escapeHtml(data?.question ?? 'Vols continuar amb aquesta acció?')}</p>`,
+            buttons: {
+                yes: {
+                    icon: '<i class="fas fa-check"></i>',
+                    label: 'Sí',
+                    callback: () => ws.confirmIntent(true, sessionId)
+                },
+                no: {
+                    icon: '<i class="fas fa-times"></i>',
+                    label: 'No',
+                    callback: () => ws.confirmIntent(false, sessionId)
+                },
+                rephrase: {
+                    icon: '<i class="fas fa-comment"></i>',
+                    label: 'Reformular',
+                    callback: () => ws.confirmIntent('rephrase', sessionId)
+                }
+            },
+            default: 'yes'
+        });
         d.render(true);
     }
 

@@ -61,6 +61,25 @@ game-master:
     default-language: catalan
     default-model: gpt-4.1-mini
 
+whisper:
+  url: http://localhost:9300
+  model: large-v3
+  language: ca
+
+piper-tts:
+  host: localhost
+  port: 10200
+  default-voice: ca_balear-x_low
+  voices:
+    narrator: ca_balear-x_low
+    npc_male_deep: es_ES-davefx-medium
+    npc_female: es_ES-sharvard-medium
+    npc_english: en_US-lessac-medium
+
+adventure:
+  intent-confirmation-threshold: 0.7
+  max-tension-level: 10
+
 
 logging:
   level:

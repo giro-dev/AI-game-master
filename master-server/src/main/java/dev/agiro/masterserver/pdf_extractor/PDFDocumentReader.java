@@ -21,7 +21,7 @@ public class PDFDocumentReader {
     /**
      * Overload accepting byte[] — safe for @Async usage.
      */
-    List<Document> getDocsFromPdfWithCatalog(byte[] pdfBytes, String foundrySystem) {
+    public List<Document> getDocsFromPdfWithCatalog(byte[] pdfBytes, String foundrySystem) {
         Resource resource = new ByteArrayResource(pdfBytes);
 
         DocumentReader pdfReader = tryParagraphReader(resource, foundrySystem)
@@ -33,7 +33,7 @@ public class PDFDocumentReader {
     /**
      * Original overload for synchronous callers that still use MultipartFile.
      */
-    List<Document> getDocsFromPdfWithCatalog(MultipartFile file, String foundrySystem) {
+    public List<Document> getDocsFromPdfWithCatalog(MultipartFile file, String foundrySystem) {
         try {
             return getDocsFromPdfWithCatalog(file.getBytes(), foundrySystem);
         } catch (IOException e) {

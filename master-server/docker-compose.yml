@@ -36,6 +36,26 @@ services:
     depends_on:
       - opensearch
 
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    environment:
+      - WHISPER__MODEL=Systran/faster-whisper-large-v3
+      - WHISPER__INFERENCE_DEVICE=cpu
+    ports:
+      - "9300:8000"
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+
+  piper-tts:
+    image: rhasspy/wyoming-piper:latest
+    command: --voice ca_balear-x_low --data-dir /data --download-dir /data
+    ports:
+      - "10200:10200"
+    volumes:
+      - piper-voices:/data
+
 volumes:
   postgres-data:
   opensearch-data:
+  whisper-models:
+  piper-voices:
