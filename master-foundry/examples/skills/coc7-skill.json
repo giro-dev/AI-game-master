@@ -1,0 +1,102 @@
+{
+  "id": "coc7-character-creation",
+  "name": "Call of Cthulhu 7th Edition",
+  "description": "Fine-tunes character generation for CoC7: characteristic ranges, skill handling, and creation guidelines.",
+  "author": "AI-Game-Master community",
+  "version": "1.0.0",
+  "systemId": "CoC7",
+  "priority": 10,
+  "enabled": true,
+
+  "actorOverrides": {
+    "character": {
+      "patchFields": {
+        "system.characteristics.str.value": { "label": "STR (Strength)", "min": 15, "max": 90 },
+        "system.characteristics.con.value": { "label": "CON (Constitution)", "min": 15, "max": 90 },
+        "system.characteristics.siz.value": { "label": "SIZ (Size)", "min": 40, "max": 90 },
+        "system.characteristics.dex.value": { "label": "DEX (Dexterity)", "min": 15, "max": 90 },
+        "system.characteristics.app.value": { "label": "APP (Appearance)", "min": 15, "max": 90 },
+        "system.characteristics.int.value": { "label": "INT (Intelligence)", "min": 40, "max": 90 },
+        "system.characteristics.pow.value": { "label": "POW (Power)", "min": 15, "max": 90 },
+        "system.characteristics.edu.value": { "label": "EDU (Education)", "min": 40, "max": 90 }
+      }
+    }
+  },
+
+  "constraints": [
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.str.value",
+      "description": "STR is rolled with 3D6×5 → range 15–90",
+      "parameters": { "min": 15, "max": 90 }
+    },
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.con.value",
+      "description": "CON is rolled with 3D6×5 → range 15–90",
+      "parameters": { "min": 15, "max": 90 }
+    },
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.siz.value",
+      "description": "SIZ is rolled with (2D6+6)×5 → range 40–90",
+      "parameters": { "min": 40, "max": 90 }
+    },
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.dex.value",
+      "description": "DEX is rolled with 3D6×5 → range 15–90",
+      "parameters": { "min": 15, "max": 90 }
+    },
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.app.value",
+      "description": "APP is rolled with 3D6×5 → range 15–90",
+      "parameters": { "min": 15, "max": 90 }
+    },
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.int.value",
+      "description": "INT is rolled with (2D6+6)×5 → range 40–90",
+      "parameters": { "min": 40, "max": 90 }
+    },
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.pow.value",
+      "description": "POW is rolled with 3D6×5 → range 15–90",
+      "parameters": { "min": 15, "max": 90 }
+    },
+    {
+      "type": "range",
+      "fieldPath": "system.characteristics.edu.value",
+      "description": "EDU is rolled with (2D6+6)×5 → range 40–90",
+      "parameters": { "min": 40, "max": 90 }
+    }
+  ],
+
+  "creationHints": "In Call of Cthulhu 7th Edition:\n- Characteristics are rolled as: STR/CON/DEX/APP/POW = 3D6×5, SIZ/INT/EDU = (2D6+6)×5.\n- Derived values: HP = (SIZ+CON)/10, MP = POW/5, SAN = POW, Luck = 3D6×5.\n- Skills start at base percentages. Investigators distribute occupation skill points (EDU×4) and personal interest points (INT×2).\n- Common base skills: Spot Hidden 25%, Listen 20%, Library Use 20%, Dodge = DEX/2.\n- Typical investigators have an occupation (e.g., Professor, Private Eye, Journalist) that determines which skills receive occupation points.",
+
+  "creationSteps": [
+    "Roll or assign the 8 characteristics (STR, CON, SIZ, DEX, APP, INT, POW, EDU)",
+    "Calculate derived attributes (HP, MP, SAN, Luck, Damage Bonus, Build, Move Rate)",
+    "Choose an occupation and assign occupation skill points (EDU×4 among occupation skills)",
+    "Assign personal interest points (INT×2 among any skills)",
+    "Choose background details: name, age, occupation, backstory, ideology, traits",
+    "Record starting gear and wealth based on occupation credit rating"
+  ],
+
+  "fieldAliases": {
+    "strength": "system.characteristics.str.value",
+    "constitution": "system.characteristics.con.value",
+    "size": "system.characteristics.siz.value",
+    "dexterity": "system.characteristics.dex.value",
+    "appearance": "system.characteristics.app.value",
+    "intelligence": "system.characteristics.int.value",
+    "power": "system.characteristics.pow.value",
+    "education": "system.characteristics.edu.value",
+    "hitPoints": "system.attribs.hp.value",
+    "magicPoints": "system.attribs.mp.value",
+    "sanity": "system.attribs.san.value",
+    "luck": "system.attribs.lck.value"
+  }
+}

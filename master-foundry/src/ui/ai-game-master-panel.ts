@@ -8,6 +8,7 @@
 import { FieldTreeBuilder } from '../utils/field-tree-builder.js';
 import { CharacterDataSanitizer } from '../utils/character-data-sanitizer.js';
 import { CharacterGenerationService } from '../services/character-generation-service.js';
+import type { SystemSkill } from '../skills/system-skill.js';
 import type {
     FieldDefinition,
     CharacterData,
@@ -118,6 +119,9 @@ export class AIGameMasterPanel extends Application {
             }
         } catch (_e) { /* server unreachable – that's fine */ }
 
+        // Skill registry data
+        const skills = game.aiGM?.skillRegistry?.getAllSkills() ?? [];
+
         return {
             // Characters tab
             actorTypes: actorTypes.map(id => ({
@@ -145,7 +149,17 @@ export class AIGameMasterPanel extends Application {
             profile: (await game.aiGM?.snapshotSender?.getProfile()) ?? null,
             wsConnected: game.aiGM?.wsClient?.isConnected() ?? false,
             serverUrl: API,
-            referenceCharacter
+            referenceCharacter,
+
+            // System skills
+            skills: skills.map((s: SystemSkill) => ({
+                id: s.id,
+                name: s.name,
+                description: s.description ?? '',
+                systemId: s.systemId,
+                worldId: s.worldId ?? '',
+                enabled: s.enabled !== false
+            }))
         };
     }
 
@@ -207,6 +221,14 @@ export class AIGameMasterPanel extends Application {
         html.find('[data-action="relearn-system"]').on('click', this._onRelearnSystem.bind(this));
         html.find('[data-action="reconnect-ws"]').on('click', this._onReconnectWS.bind(this));
         html.find('[data-action="clear-reference"]').on('click', this._onClearReference.bind(this));
+
+        // ── Skill management ──
+        html.find('[data-action="import-skill"]').on('click', this._onImportSkill.bind(this));
+        html.find('[data-action="create-skill"]').on('click', this._onCreateSkill.bind(this));
+        html.find('[data-action="export-skills"]').on('click', this._onExportSkills.bind(this));
+        html.find('[data-action="toggle-skill"]').on('click', this._onToggleSkill.bind(this));
+        html.find('[data-action="edit-skill"]').on('click', this._onEditSkill.bind(this));
+        html.find('[data-action="delete-skill"]').on('click', this._onDeleteSkill.bind(this));
 
         // Dynamic result-card buttons (delegated)
         html.find('#char-result').on('click', '[data-action="create-character"]', this._onCreateCharacter.bind(this));
@@ -1280,5 +1302,165 @@ export class AIGameMasterPanel extends Application {
             }
         }
     }
+
+    /* ================================================================== */
+    /*  SKILL MANAGEMENT                                                   */
+    /* ================================================================== */
+
+    private async _onImportSkill(_ev: any): Promise<void> {
+        const registry = game.aiGM?.skillRegistry;
+        if (!registry) {
+            ui.notifications.error('Skill registry not available');
+            return;
+        }
+
+        // Use a hidden file input to let the user pick a JSON file
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const count = registry.importFromJSON(text);
+                ui.notifications.info(`Imported ${count} skill(s)`);
+                this.render(false);
+            } catch (e: any) {
+                ui.notifications.error(`Import failed: ${e.message}`);
+            }
+        };
+        input.click();
+    }
+
+    private _onCreateSkill(_ev: any): void {
+        const registry = game.aiGM?.skillRegistry;
+        if (!registry) return;
+
+        const template: SystemSkill = {
+            id: '',
+            name: 'My Custom Skill',
+            description: 'Describe what this skill does',
+            systemId: game.system.id,
+            worldId: game.world?.id ?? '',
+            priority: 0,
+            enabled: true,
+            extraActorTypes: [],
+            actorOverrides: {},
+            constraints: [],
+            creationHints: '',
+            creationSteps: [],
+            defaultItems: [],
+            fieldAliases: {}
+        };
+
+        this._openSkillEditor(template, (skill) => {
+            registry.upsert(skill);
+            ui.notifications.info(`Skill "${skill.name}" created`);
+            this.render(false);
+        });
+    }
+
+    private _onExportSkills(_ev: any): void {
+        const registry = game.aiGM?.skillRegistry;
+        if (!registry) return;
+
+        const json = registry.exportToJSON();
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ai-gm-skills-${game.system.id}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    private _onToggleSkill(ev: any): void {
+        const registry = game.aiGM?.skillRegistry;
+        if (!registry) return;
+
+        const skillId = ev.currentTarget?.dataset?.skillId;
+        if (skillId && registry.toggleEnabled(skillId)) {
+            this.render(false);
+        }
+    }
+
+    private _onEditSkill(ev: any): void {
+        const registry = game.aiGM?.skillRegistry;
+        if (!registry) return;
+
+        const skillId = ev.currentTarget?.dataset?.skillId;
+        const skill = registry.getAllSkills().find((s: SystemSkill) => s.id === skillId);
+        if (!skill) return;
+
+        this._openSkillEditor(skill, (updated) => {
+            registry.upsert(updated);
+            ui.notifications.info(`Skill "${updated.name}" updated`);
+            this.render(false);
+        });
+    }
+
+    private async _onDeleteSkill(ev: any): Promise<void> {
+        const registry = game.aiGM?.skillRegistry;
+        if (!registry) return;
+
+        const skillId = ev.currentTarget?.dataset?.skillId;
+        if (!skillId) return;
+
+        const confirmed = await Dialog.confirm({
+            title: 'Delete Skill',
+            content: '<p>Are you sure you want to delete this skill?</p>'
+        });
+
+        if (confirmed) {
+            registry.remove(skillId);
+            ui.notifications.info('Skill deleted');
+            this.render(false);
+        }
+    }
+
+    /**
+     * Open a dialog with a JSON editor for the skill.
+     */
+    private _openSkillEditor(skill: SystemSkill, onSave: (s: SystemSkill) => void): void {
+        const json = JSON.stringify(skill, null, 2);
+
+        const d = new Dialog({
+            title: skill.id ? `Edit Skill: ${skill.name}` : 'New Skill',
+            content: `
+                <div style="margin-bottom:8px;">
+                    <p class="hint">Edit the skill JSON below. Required fields: <code>name</code>, <code>systemId</code>.</p>
+                </div>
+                <textarea id="skill-json-editor" style="width:100%;height:350px;font-family:monospace;font-size:0.85rem;tab-size:2;">${this._escapeHtml(json)}</textarea>
+            `,
+            buttons: {
+                save: {
+                    icon: '<i class="fas fa-save"></i>',
+                    label: 'Save',
+                    callback: (html: any) => {
+                        const raw = html.find('#skill-json-editor').val() as string;
+                        try {
+                            const parsed = JSON.parse(raw) as SystemSkill;
+                            if (!parsed.name || !parsed.systemId) {
+                                ui.notifications.error('Skill must have a "name" and "systemId"');
+                                return;
+                            }
+                            onSave(parsed);
+                        } catch (e: any) {
+                            ui.notifications.error(`Invalid JSON: ${e.message}`);
+                        }
+                    }
+                },
+                cancel: {
+                    icon: '<i class="fas fa-times"></i>',
+                    label: 'Cancel'
+                }
+            },
+            default: 'save'
+        }, { width: 560, height: 500 });
+
+        d.render(true);
+    }
+
 }
 

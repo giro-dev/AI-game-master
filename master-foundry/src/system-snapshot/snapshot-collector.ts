@@ -296,6 +296,48 @@ export class SystemSnapshotCollector {
     private _collectTemplateData(): any {
         const templateData: Record<string, any> = {};
 
+        // v14+: Collect TypeDataModel schema info from CONFIG.*.dataModels
+        if (CONFIG.Actor?.dataModels) {
+            const actorDataModels: Record<string, any> = {};
+            for (const [type, model] of Object.entries(CONFIG.Actor.dataModels)) {
+                try {
+                    if (typeof (model as any).defineSchema === 'function') {
+                        const schema = (model as any).defineSchema();
+                        actorDataModels[type] = this._safeSerialize(
+                            Object.keys(schema).reduce((acc: Record<string, string>, key: string) => {
+                                acc[key] = schema[key]?.constructor?.name ?? 'unknown';
+                                return acc;
+                            }, {}), 3
+                        );
+                    }
+                } catch (_e) { /* skip individual models that fail */ }
+            }
+            if (Object.keys(actorDataModels).length > 0) {
+                templateData.actorDataModels = actorDataModels;
+            }
+        }
+
+        if (CONFIG.Item?.dataModels) {
+            const itemDataModels: Record<string, any> = {};
+            for (const [type, model] of Object.entries(CONFIG.Item.dataModels)) {
+                try {
+                    if (typeof (model as any).defineSchema === 'function') {
+                        const schema = (model as any).defineSchema();
+                        itemDataModels[type] = this._safeSerialize(
+                            Object.keys(schema).reduce((acc: Record<string, string>, key: string) => {
+                                acc[key] = schema[key]?.constructor?.name ?? 'unknown';
+                                return acc;
+                            }, {}), 3
+                        );
+                    }
+                } catch (_e) { /* skip individual models that fail */ }
+            }
+            if (Object.keys(itemDataModels).length > 0) {
+                templateData.itemDataModels = itemDataModels;
+            }
+        }
+
+        // Legacy: game.system.template (deprecated in v12+)
         if (game.system?.template) {
             if (game.system.template.Actor) {
                 templateData.actorTemplate = this._safeSerialize(game.system.template.Actor, 3);

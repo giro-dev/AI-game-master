@@ -1,0 +1,46 @@
+{
+  "id": "csb-trueque",
+  "name": "Trueque (Custom System Builder)",
+  "description": "Adapter for the Trueque RPG running on Custom System Builder. Provides schema fields and creation hints since CSB does not expose schemas via standard Foundry APIs.",
+  "author": "AI-Game-Master community",
+  "version": "1.0.0",
+  "systemId": "custom-system-builder",
+  "worldId": "trueque",
+  "priority": 10,
+  "enabled": true,
+
+  "extraActorTypes": ["character"],
+
+  "actorOverrides": {
+    "character": {
+      "addFields": [
+        { "path": "system.nombre", "type": "string", "label": "Nombre", "required": true },
+        { "path": "system.concepto", "type": "string", "label": "Concepto del Personaje" },
+        { "path": "system.creencia1", "type": "string", "label": "Creencia 1" },
+        { "path": "system.creencia2", "type": "string", "label": "Creencia 2" },
+        { "path": "system.creencia3", "type": "string", "label": "Creencia 3" },
+        { "path": "system.trasfondo1", "type": "string", "label": "Trasfondo 1" },
+        { "path": "system.trasfondo2", "type": "string", "label": "Trasfondo 2" },
+        { "path": "system.trasfondo3", "type": "string", "label": "Trasfondo 3" },
+        { "path": "system.pilarEstabilidad1", "type": "string", "label": "Pilar de Estabilidad 1" },
+        { "path": "system.pilarEstabilidad2", "type": "string", "label": "Pilar de Estabilidad 2" },
+        { "path": "system.posesionPreciada", "type": "string", "label": "Posesión Preciada" },
+        { "path": "system.impetu", "type": "number", "label": "Puntos de Ímpetu", "min": 0, "max": 3, "default": 3 },
+        { "path": "system.baladaTriste", "type": "string", "label": "Balada Triste" },
+        { "path": "system.notas", "type": "string", "label": "Notas" }
+      ]
+    }
+  },
+
+  "creationHints": "Trueque is a horror RPG by Pepe Pedraz.\n- Characters are defined by: a concept (concepto), 3 beliefs (creencias), 3 backgrounds (trasfondos), 2 pillars of stability (pilares de estabilidad), and a treasured possession (posesión preciada).\n- Characters start with 3 Impetus points (Ímpetu).\n- Dice rolls are either Horror rolls or Risk rolls.\n- There are multiple settings: Trueque, Mitos, Folk Horror, Vacío, Revoluciones.\n- Character sheets are created via Custom System Builder templates.",
+
+  "creationSteps": [
+    "Define the character concept (concepto) — a short summary of who the character is",
+    "Write three beliefs (creencias) that define the character's worldview",
+    "Choose three backgrounds (trasfondos) — past experiences that shaped the character",
+    "Define two pillars of stability (pilares de estabilidad) — what keeps the character grounded",
+    "Choose a treasured possession (posesión preciada)",
+    "Set Impetus (Ímpetu) to 3",
+    "Optionally write a sad ballad (balada triste)"
+  ]
+}

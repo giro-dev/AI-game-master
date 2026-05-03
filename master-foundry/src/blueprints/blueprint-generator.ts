@@ -4,13 +4,21 @@
  */
 
 import { SchemaExtractor } from '../schema/schema-extractor.js';
+import type { SystemSkillRegistry } from '../skills/system-skill.js';
 import type { FieldDefinition, FullBlueprint, AIBlueprint, ValidationResult } from '../types/index.js';
 
 export class BlueprintGenerator {
     public readonly schemaExtractor: SchemaExtractor;
+    private skillRegistry: SystemSkillRegistry | null = null;
 
     constructor() {
         this.schemaExtractor = new SchemaExtractor();
+    }
+
+    /** Attach a skill registry for constraint/hint injection. */
+    setSkillRegistry(registry: SystemSkillRegistry): void {
+        this.skillRegistry = registry;
+        this.schemaExtractor.setSkillRegistry(registry);
     }
 
     /**
@@ -44,6 +52,9 @@ export class BlueprintGenerator {
             }
         };
 
+        // Inject skill constraints & hints
+        this._applySkillEnhancements(blueprint);
+
         return blueprint;
     }
 
@@ -53,7 +64,7 @@ export class BlueprintGenerator {
     generateAIBlueprint(actorType: string, selectedFields: string[] | null = null): AIBlueprint {
         const fullBlueprint = this.generateBlueprint(actorType, selectedFields);
 
-        return {
+        const aiBlueprint: AIBlueprint = {
             systemId: fullBlueprint.systemId,
             actorType: fullBlueprint.actorType,
             actorFields: this._simplifyFieldsForAI(fullBlueprint.actor.fields),
@@ -67,6 +78,24 @@ export class BlueprintGenerator {
             coreFields: fullBlueprint.actor.coreFields,
             example: this._generateExample(fullBlueprint)
         };
+
+        // Append skill creation hints / steps to the AI blueprint
+        if (this.skillRegistry) {
+            const hints = this.skillRegistry.getCreationHints();
+            if (hints) {
+                (aiBlueprint as any).creationHints = hints;
+            }
+            const steps = this.skillRegistry.getCreationSteps();
+            if (steps.length > 0) {
+                (aiBlueprint as any).creationSteps = steps;
+            }
+            const aliases = this.skillRegistry.getFieldAliases();
+            if (Object.keys(aliases).length > 0) {
+                (aiBlueprint as any).fieldAliases = aliases;
+            }
+        }
+
+        return aiBlueprint;
     }
 
     /**
@@ -340,6 +369,50 @@ export class BlueprintGenerator {
         }
 
         return values;
+    }
+
+    /* ── Skill integration ── */
+
+    /**
+     * Inject constraints, creation hints, and default items from active skills.
+     */
+    private _applySkillEnhancements(blueprint: FullBlueprint): void {
+        if (!this.skillRegistry) return;
+
+        // Constraints
+        const skillConstraints = this.skillRegistry.getAllConstraints();
+        if (skillConstraints.length > 0) {
+            blueprint.constraints = blueprint.constraints || [];
+            for (const c of skillConstraints) {
+                blueprint.constraints.push({
+                    type: c.type,
+                    path: c.fieldPath,
+                    description: c.description,
+                    ...c.parameters
+                });
+            }
+        }
+
+        // Creation hints as metadata
+        const hints = this.skillRegistry.getCreationHints();
+        if (hints) {
+            blueprint.metadata = blueprint.metadata || {};
+            blueprint.metadata.skillHints = hints;
+        }
+
+        // Creation steps
+        const steps = this.skillRegistry.getCreationSteps();
+        if (steps.length > 0) {
+            blueprint.metadata = blueprint.metadata || {};
+            blueprint.metadata.skillCreationSteps = steps;
+        }
+
+        // Default items
+        const defaultItems = this.skillRegistry.getDefaultItems();
+        if (defaultItems.length > 0) {
+            blueprint.metadata = blueprint.metadata || {};
+            blueprint.metadata.defaultItems = defaultItems;
+        }
     }
 }
 
