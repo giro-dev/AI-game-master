@@ -31,6 +31,14 @@ spring:
         options:
           model: text-embedding-3-small
         project-id: ${GM-PROJECT}
+      audio:
+        transcription:
+          base-url: ${WHISPER_BASE_URL:http://localhost:9000}
+          api-key: no-key-needed
+          options:
+            model: whisper-1
+            language: ca
+            response-format: json
     google:
       genai:
         api-key: ${GOOGLE_GENAI_API_KEY}
@@ -55,6 +63,10 @@ spring:
     multipart:
       max-file-size: 50MB
       max-request-size: 50MB
+
+transcription:
+  opensearch-url: http://localhost:9200
+  default-language: ca
 
 game-master:
   chat:
