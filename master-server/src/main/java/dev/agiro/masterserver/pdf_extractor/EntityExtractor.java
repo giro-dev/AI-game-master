@@ -3,7 +3,6 @@ package dev.agiro.masterserver.pdf_extractor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -31,12 +30,11 @@ public class EntityExtractor {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
 
-    public EntityExtractor(ChatClient.Builder builder, ObjectMapper objectMapper) {
+    public EntityExtractor(ChatClient.Builder builder,
+                           ObjectMapper objectMapper,
+                           dev.agiro.masterserver.service.ModelRoutingService modelRoutingService) {
         this.chatClient = builder
-                .defaultOptions(ChatOptions.builder()
-                        .model("gpt-4.1-mini")
-                        .temperature(0.1)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("entity-extractor"))
                 .build();
         this.objectMapper = objectMapper;
     }
@@ -78,20 +76,9 @@ public class EntityExtractor {
                 .system(extractorPrompt)
                 .user(u -> u.text("{userMessage}").param("userMessage", userMessage))
                 .call()
-                .content();
+                .entity(new org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>() {});
 
-        response = cleanJson(response);
-
-        List<Map<String, Object>> entities;
-        try {
-            // Try parsing as array first
-            entities = objectMapper.readValue(response,
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
-        } catch (Exception e) {
-            // Maybe a single object
-            Map<String, Object> single = objectMapper.readValue(response, Map.class);
-            entities = List.of(single);
-        }
+        List<Map<String, Object>> entities = response != null ? response : List.of();
 
         List<Document> results = new ArrayList<>();
         for (Map<String, Object> entity : entities) {
@@ -111,15 +98,6 @@ public class EntityExtractor {
         }
 
         return results;
-    }
-
-    private String cleanJson(String raw) {
-        if (raw == null) return "[]";
-        raw = raw.trim();
-        if (raw.startsWith("```json")) raw = raw.substring(7);
-        else if (raw.startsWith("```")) raw = raw.substring(3);
-        if (raw.endsWith("```")) raw = raw.substring(0, raw.length() - 3);
-        return raw.trim();
     }
 }
 

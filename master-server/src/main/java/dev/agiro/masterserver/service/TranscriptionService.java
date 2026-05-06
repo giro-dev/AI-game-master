@@ -19,6 +19,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -31,9 +32,6 @@ import java.util.Map;
 @Slf4j
 @Service
 public class TranscriptionService {
-
-    private static final String OPENSEARCH_HOST = "localhost";
-    private static final int OPENSEARCH_PORT = 9200;
 
     private final RestClient openSearchClient;
     private final RestTemplate restTemplate;
@@ -48,10 +46,12 @@ public class TranscriptionService {
     @Value("${whisper.language:ca}")
     private String whisperLanguage;
 
-    public TranscriptionService(ObjectMapper objectMapper) {
+    public TranscriptionService(ObjectMapper objectMapper,
+                                @Value("${opensearch.host:localhost}") String opensearchHost,
+                                @Value("${opensearch.port:9200}") int opensearchPort) {
         this.objectMapper = objectMapper;
         RestClientBuilder builder = RestClient.builder(
-                new HttpHost(OPENSEARCH_HOST, OPENSEARCH_PORT, "http")
+                new HttpHost(opensearchHost, opensearchPort, "http")
         );
         this.openSearchClient = builder.build();
         this.restTemplate = new RestTemplate();
@@ -111,33 +111,18 @@ public class TranscriptionService {
     public void saveTranscription(String transcriptionId, String transcription, Map<String, Object> metadata) throws IOException {
         Request request = new Request("PUT", "/transcriptions/_doc/" + transcriptionId);
 
-        StringBuilder jsonEntity = new StringBuilder();
-        jsonEntity.append("{");
-        jsonEntity.append("\"transcription\": ").append(jsonString(transcription));
-
+        Map<String, Object> doc = new HashMap<>();
+        doc.put("transcription", transcription);
         if (metadata != null) {
-            for (Map.Entry<String, Object> entry : metadata.entrySet()) {
-                jsonEntity.append(",")
-                        .append(jsonString(entry.getKey()))
-                        .append(":")
-                        .append(entry.getValue() instanceof String
-                                ? jsonString((String) entry.getValue())
-                                : entry.getValue());
-            }
+            doc.putAll(metadata);
         }
-        jsonEntity.append("}");
 
-        request.setJsonEntity(jsonEntity.toString());
+        request.setJsonEntity(objectMapper.writeValueAsString(doc));
         openSearchClient.performRequest(request);
     }
 
     public String getTranscription(String transcriptionId) throws IOException {
         Request request = new Request("GET", "/transcriptions/_doc/" + transcriptionId);
         return openSearchClient.performRequest(request).getEntity().toString();
-    }
-
-    private static String jsonString(String s) {
-        if (s == null) return "null";
-        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 }

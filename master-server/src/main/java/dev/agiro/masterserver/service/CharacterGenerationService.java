@@ -5,12 +5,10 @@ import dev.agiro.masterserver.controller.WebSocketController;
 import dev.agiro.masterserver.dto.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -25,53 +23,6 @@ public class CharacterGenerationService {
     private final ConceptAgent conceptAgent;
     private final FieldFillerAgent fieldFillerAgent;
     private final ItemGenerationAgent itemGenerationAgent;
-
-    // Fallback prompts used only when no System Profile is available
-    private static final String FALLBACK_CORE_CONCEPT_PROMPT = """
-            You are an expert character creator for tabletop RPG systems.
-            
-            Create a core concept for a character based on the user's description.
-            Generate ONLY the essential identity fields.
-            
-            Respond ONLY with valid JSON:
-            {
-              "name": "Character Name",
-              "concept": "Brief concept (2-3 sentences)",
-              "biography": "Background story (3-4 sentences)",
-              "description": "Physical/personality description (2-3 sentences)"
-            }
-            
-            Language: {language}
-            Be creative and evocative. This concept will be used to fill other fields.
-            """;
-
-    private static final String FALLBACK_FILL_FIELDS_PROMPT = """
-            You are an expert at filling character sheet fields for tabletop RPG systems.
-            
-            You will receive:
-            1. A character concept
-            2. A list of fields to fill
-            3. System rules and guidance
-            
-            CRITICAL RULES:
-            - Fill EVERY field in the list
-            - Respect field types: "string" for text, "number" for integers, "resource" for numbers
-            - Respect min/max constraints strictly
-            - If a POINT BUDGET is specified, the values for the constrained fields MUST sum to EXACTLY the required total
-            - Before responding, verify the arithmetic: add up all numeric values for budget-constrained groups
-            - Distribute values wisely based on the character concept
-            - Use the character concept to inform your choices
-            
-            RESPONSE FORMAT: valid JSON - a flat object with field paths as keys.
-            Language: {language}
-            """;
-
-    private static final String FALLBACK_ITEMS_PROMPT = """
-            You are an expert at creating items for tabletop RPG characters.
-            Based on the character concept and available item types, create 2-4 relevant items.
-            Respond ONLY with valid JSON array.
-            Language: {language}
-            """;
 
     private static final String CHARACTER_EXPLANATION_SYSTEM_PROMPT = """
             You are a Game Master who can read character sheets and describe them narratively.
@@ -89,16 +40,14 @@ public class CharacterGenerationService {
             """;
 
     public CharacterGenerationService(ChatClient.Builder chatClientBuilder,
+                                      ModelRoutingService modelRoutingService,
                                       ObjectMapper objectMapper,
                                       WebSocketController webSocketController,
                                       ConceptAgent conceptAgent,
                                       FieldFillerAgent fieldFillerAgent,
                                       ItemGenerationAgent itemGenerationAgent) {
         this.chatClient = chatClientBuilder
-                .defaultOptions(ChatOptions.builder()
-                        .model("gpt-4o-mini")
-                        .temperature(0.8)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("concept-agent"))
                 .build();
         this.objectMapper = objectMapper;
         this.webSocketController = webSocketController;
@@ -355,67 +304,4 @@ public class CharacterGenerationService {
             return errorResponse;
         }
     }
-
-
-    /**
-     * Clean JSON response from AI (remove markdown code blocks)
-     */
-    private String cleanJsonResponse(String response) {
-        if (response == null) return "{}";
-
-        // Remove markdown code blocks
-        response = response.trim();
-        if (response.startsWith("```json")) {
-            response = response.substring(7);
-        } else if (response.startsWith("```")) {
-            response = response.substring(3);
-        }
-
-        if (response.endsWith("```")) {
-            response = response.substring(0, response.length() - 3);
-        }
-
-        return response.trim();
-    }
-
-    /**
-     * Extract the character name from the AI's core concept response.
-     * The AI might use localized keys depending on the prompt language,
-     * so we try multiple candidate keys before falling back.
-     */
-    private String extractName(Map<String, Object> coreConcept) {
-        // Try standard keys first
-        List<String> candidateKeys = List.of(
-                "name", "nombre", "nom", "nome", "Name",
-                "character_name", "characterName",
-                "actor_name", "actorName"
-        );
-        for (String key : candidateKeys) {
-            Object val = coreConcept.get(key);
-            if (val instanceof String s && !s.isBlank()) {
-                return s;
-            }
-        }
-
-        // Case-insensitive search
-        for (Map.Entry<String, Object> entry : coreConcept.entrySet()) {
-            if (entry.getKey().toLowerCase().contains("name") || entry.getKey().toLowerCase().contains("nom")) {
-                if (entry.getValue() instanceof String s && !s.isBlank()) {
-                    return s;
-                }
-            }
-        }
-
-        // Last resort: use first non-blank string value
-        for (Object val : coreConcept.values()) {
-            if (val instanceof String s && !s.isBlank() && s.length() < 60) {
-                log.warn("Could not find 'name' key in core concept, using first short string: '{}'", s);
-                return s;
-            }
-        }
-
-        log.warn("No name found in core concept: {}", coreConcept.keySet());
-        return "AI Character";
-    }
 }
-

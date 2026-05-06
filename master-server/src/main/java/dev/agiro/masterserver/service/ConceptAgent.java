@@ -1,11 +1,10 @@
 package dev.agiro.masterserver.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.CreateCharacterRequest;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -22,10 +21,10 @@ import java.util.Map;
 public class ConceptAgent {
 
     private final ChatClient chatClient;
-    private final ObjectMapper objectMapper;
     private final SystemProfileService systemProfileService;
     private final SystemAwarePromptBuilder promptBuilder;
     private final GameMasterManualSolver gameMasterManualSolver;
+    private final RAGService ragService;
 
     // Fallback prompt used only when no System Profile is available
     private static final String FALLBACK_CORE_CONCEPT_PROMPT = """
@@ -44,35 +43,35 @@ public class ConceptAgent {
             
             Language: {language}
             Be creative and evocative. This concept will be used to fill other fields.
+            Use the available tools to look up system-specific rules or guidance if needed.
             """;
 
     public ConceptAgent(ChatClient.Builder chatClientBuilder,
-                        ObjectMapper objectMapper,
                         SystemProfileService systemProfileService,
                         SystemAwarePromptBuilder promptBuilder,
-                        GameMasterManualSolver gameMasterManualSolver) {
+                        GameMasterManualSolver gameMasterManualSolver,
+                        RAGService ragService,
+                        ModelRoutingService modelRoutingService) {
         this.chatClient = chatClientBuilder
-                .defaultOptions(ChatOptions.builder()
-                        .model("gpt-4o-mini")
-                        .temperature(0.8)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("concept-agent"))
                 .build();
-        this.objectMapper = objectMapper;
         this.systemProfileService = systemProfileService;
         this.promptBuilder = promptBuilder;
         this.gameMasterManualSolver = gameMasterManualSolver;
+        this.ragService = ragService;
     }
 
     public Map<String, Object> generateCoreConcept(CreateCharacterRequest request, String language) throws Exception {
         String systemId = request.getBlueprint().getSystemId();
         SystemProfileDto profile = resolveProfile(systemId);
 
-        // Build system context: profile-aware or fallback to RAG guidance
+        // When a profile is available use it for deterministic context;
+        // otherwise the LLM can query the manuals via the registered @Tool methods.
         String systemContext;
         if (profile != null) {
             systemContext = promptBuilder.buildSystemContext(profile);
         } else {
-            systemContext = getActorTypeGuidance(request.getActorType(), systemId);
+            systemContext = "";
         }
 
         // Inject reference character context if available
@@ -101,47 +100,22 @@ public class ConceptAgent {
                 ? promptBuilder.buildCoreConceptPrompt(profile, language)
                 : FALLBACK_CORE_CONCEPT_PROMPT.replace("{language}", language);
 
-        String responseJson = chatClient.prompt()
+        Map<String, Object> concept = chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt))
+                .tools(ragService, gameMasterManualSolver)
                 .call()
-                .content();
+                .entity(new ParameterizedTypeReference<>() {});
 
-        responseJson = cleanJsonResponse(responseJson);
-        log.debug("Core concept raw response: {}", responseJson);
-        Map<String, Object> concept = objectMapper.readValue(responseJson, Map.class);
+        if (concept == null) {
+            concept = Map.of();
+        }
         log.info("Core concept keys: {}, name='{}'", concept.keySet(), extractName(concept));
         return concept;
     }
 
     private SystemProfileDto resolveProfile(String systemId) {
         return systemProfileService.getProfile(systemId).orElse(null);
-    }
-
-    private String getActorTypeGuidance(String actorType, String systemId) {
-        try {
-            return gameMasterManualSolver.solveDoubt(
-                    String.format("How do I create a %s in this game system? What are the rules and important considerations?", actorType),
-                    systemId
-            );
-        } catch (Exception e) {
-            log.warn("Failed to retrieve actor type guidance", e);
-            return "";
-        }
-    }
-
-    private String cleanJsonResponse(String response) {
-        if (response == null) return "{}";
-        response = response.trim();
-        if (response.startsWith("```json")) {
-            response = response.substring(7);
-        } else if (response.startsWith("```")) {
-            response = response.substring(3);
-        }
-        if (response.endsWith("```")) {
-            response = response.substring(0, response.length() - 3);
-        }
-        return response.trim();
     }
 
     /**

@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.ReferenceCharacterDto;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import dev.agiro.masterserver.dto.SystemSnapshotDto;
+import dev.agiro.masterserver.repository.ReferenceCharacterRepository;
+import dev.agiro.masterserver.repository.SystemProfileRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -561,12 +563,7 @@ public class SystemProfileService {
     }
 
     private String cleanJson(String raw) {
-        if (raw == null) return "{}";
-        String trimmed = raw.trim();
-        if (trimmed.startsWith("```json")) trimmed = trimmed.substring(7);
-        else if (trimmed.startsWith("```")) trimmed = trimmed.substring(3);
-        if (trimmed.endsWith("```")) trimmed = trimmed.substring(0, trimmed.length() - 3);
-        return trimmed.trim();
+        return dev.agiro.masterserver.util.JsonUtils.stripMarkdownFences(raw, "{}");
     }
 
     // Inner class for analysis result

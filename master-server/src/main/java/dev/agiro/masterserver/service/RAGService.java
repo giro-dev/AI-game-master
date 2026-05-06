@@ -3,9 +3,9 @@ package dev.agiro.masterserver.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +30,7 @@ public class RAGService {
     /**
      * Search for relevant context about item types.
      */
+    @Tool(description = "Search the rules vector store for item mechanics and descriptions matching the given item types and game system.")
     public String searchItemContext(List<String> itemTypes, String systemId, int topK) {
         return searchItemContext(itemTypes, systemId, null, topK);
     }
@@ -56,6 +57,7 @@ public class RAGService {
 
     // ─── Character creation context ─────────────────────────────────────
 
+    @Tool(description = "Search the rules vector store for character creation guidance matching the given concept and game system.")
     public String searchCharacterCreationContext(String characterConcept, String systemId, int topK) {
         return searchCharacterCreationContext(characterConcept, systemId, null, topK);
     }
@@ -94,6 +96,7 @@ public class RAGService {
     /**
      * Search for extracted entities of a specific type (weapon, spell, npc, etc.)
      */
+    @Tool(description = "Search the vector store for extracted structured entities (weapons, spells, NPCs, etc.) filtered by game system, world, and entity type.")
     public String searchExtractedEntities(String query, String systemId, String worldId, String entityType, int topK) {
         log.info("Searching extracted entities: type={}, system={}, world={}", entityType, systemId, worldId);
         try {
@@ -121,6 +124,7 @@ public class RAGService {
     /**
      * Search bestiary and NPC stat blocks for NPC generation.
      */
+    @Tool(description = "Search bestiary and NPC stat blocks for the given query, filtered by game system and world.")
     public String searchBestiaryContext(String query, String systemId, String worldId, int topK) {
         log.info("Searching bestiary context: system={}, world={}", systemId, worldId);
         try {
@@ -146,17 +150,28 @@ public class RAGService {
     private String searchSingle(String query, String systemId, String worldId,
                                 String chunkType, String documentType, int topK) {
         FilterExpressionBuilder b = new FilterExpressionBuilder();
-        FilterExpressionBuilder.Op filter = b.eq("foundry_system", systemId);
-        if (worldId != null) filter = b.and(filter, b.eq("world_id", worldId));
-        if (chunkType != null) filter = b.and(filter, b.eq("chunk_type", chunkType));
-        if (documentType != null) filter = b.and(filter, b.eq("document_type", documentType));
+        FilterExpressionBuilder.Op filter = null;
+        if (systemId != null && !systemId.isBlank()) {
+            filter = b.eq("foundry_system", systemId);
+        }
+        if (worldId != null) {
+            filter = filter == null ? b.eq("world_id", worldId) : b.and(filter, b.eq("world_id", worldId));
+        }
+        if (chunkType != null) {
+            filter = filter == null ? b.eq("chunk_type", chunkType) : b.and(filter, b.eq("chunk_type", chunkType));
+        }
+        if (documentType != null) {
+            filter = filter == null ? b.eq("document_type", documentType) : b.and(filter, b.eq("document_type", documentType));
+        }
 
-        List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
+        SearchRequest.Builder searchBuilder = SearchRequest.builder()
                 .query(query)
-                .topK(topK)
-                .filterExpression(filter.build())
-                .build());
+                .topK(topK);
+        if (filter != null) {
+            searchBuilder.filterExpression(filter.build());
+        }
 
+        List<Document> docs = vectorStore.similaritySearch(searchBuilder.build());
         return formatDocuments(docs);
     }
 

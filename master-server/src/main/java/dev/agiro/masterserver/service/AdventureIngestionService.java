@@ -1,7 +1,6 @@
 package dev.agiro.masterserver.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import dev.agiro.masterserver.model.Act;
 import dev.agiro.masterserver.model.AdventureModule;
 import dev.agiro.masterserver.model.Clue;
@@ -11,16 +10,14 @@ import dev.agiro.masterserver.model.SceneTransition;
 import dev.agiro.masterserver.pdf_extractor.IngestionPipeline;
 import dev.agiro.masterserver.pdf_extractor.PDFDocumentReader;
 import dev.agiro.masterserver.repository.AdventureModuleRepository;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.document.Document;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -97,26 +94,20 @@ public class AdventureIngestionService {
     private static final int MAX_PROMPT_CHARS = 60_000;
 
     private final ChatClient chatClient;
-    private final ObjectMapper objectMapper;
     private final AdventureModuleRepository adventureModuleRepository;
     private final PDFDocumentReader pdfDocumentReader;
     private final IngestionPipeline ingestionPipeline;
     private final PiperVoiceSelector piperVoiceSelector;
 
     public AdventureIngestionService(ChatClient.Builder chatClientBuilder,
-                                     ObjectMapper objectMapper,
                                      AdventureModuleRepository adventureModuleRepository,
                                      PDFDocumentReader pdfDocumentReader,
                                      IngestionPipeline ingestionPipeline,
                                      PiperVoiceSelector piperVoiceSelector,
-                                     @Value("${game-master.chat.default-model:gpt-4.1-mini}") String defaultModel) {
+                                     ModelRoutingService modelRoutingService) {
         this.chatClient = chatClientBuilder
-                .defaultOptions(ChatOptions.builder()
-                        .model(defaultModel)
-                        .temperature(0.2)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("concept-agent"))
                 .build();
-        this.objectMapper = objectMapper;
         this.adventureModuleRepository = adventureModuleRepository;
         this.pdfDocumentReader = pdfDocumentReader;
         this.ingestionPipeline = ingestionPipeline;
@@ -144,17 +135,17 @@ public class AdventureIngestionService {
         }
 
         // 2. Ask the LLM to structure it.
-        String aiJson = chatClient.prompt()
+        AdventureStructureResponse structureResponse = chatClient.prompt()
                 .system(STRUCTURE_PROMPT)
                 .user(fullText)
                 .call()
-                .content();
-        if (aiJson == null) {
+                .entity(AdventureStructureResponse.class);
+
+        if (structureResponse == null) {
             throw new IOException("LLM returned no content for adventure structure");
         }
-        aiJson = stripMarkdownFence(aiJson);
 
-        AdventureModule module = parseAdventureModule(aiJson, foundrySystem, worldId, bookTitle);
+        AdventureModule module = buildAdventureModule(structureResponse, foundrySystem, worldId, bookTitle);
 
         // 3. Persist.
         AdventureModule saved = adventureModuleRepository.save(module);
@@ -172,134 +163,162 @@ public class AdventureIngestionService {
         return saved;
     }
 
-    private AdventureModule parseAdventureModule(String aiJson, String fallbackSystem, String worldId, String fallbackTitle) throws IOException {
-        JsonNode root = objectMapper.readTree(aiJson);
-
+    private AdventureModule buildAdventureModule(AdventureStructureResponse r,
+                                                 String fallbackSystem,
+                                                 String worldId,
+                                                 String fallbackTitle) {
         String moduleId = "adv-" + UUID.randomUUID();
-        String title = textOr(root.get("title"), fallbackTitle != null ? fallbackTitle : "Untitled adventure");
-        String system = textOr(root.get("system"), fallbackSystem != null ? fallbackSystem : "unknown");
-        String synopsis = textOr(root.get("synopsis"), "");
+        String title = orElse(r.getTitle(), fallbackTitle != null ? fallbackTitle : "Untitled adventure");
+        String system = orElse(r.getSystem(), fallbackSystem != null ? fallbackSystem : "unknown");
+        String synopsis = orElse(r.getSynopsis(), "");
 
-        List<NpcProfile> npcs = new ArrayList<>();
-        log.info("Parsing adventure module with {} NPCs", root.get("npcs").size());
-        if (root.has("npcs") && root.get("npcs").isArray()) {
-            for (JsonNode n : root.get("npcs")) {
-                String npcId = textOr(n.get("id"), "npc-" + UUID.randomUUID());
-                String name = textOr(n.get("name"), npcId);
-                String personality = textOr(n.get("personality"), "");
-                String secrets = textOr(n.get("secrets"), "");
-                String objectives = textOr(n.get("objectives"), "");
-                String voiceSuggestion = textOr(n.get("voiceSuggestion"), null);
-                String gender = piperVoiceSelector.inferGender(textOr(n.get("gender"), null), voiceSuggestion, name, personality, secrets, objectives);
-                String voiceId = piperVoiceSelector.selectInitialNpcVoice(gender, voiceSuggestion);
-                npcs.add(NpcProfile.builder()
-                        .id(npcId)
-                        .name(name)
-                        .gender(gender)
-                        .personality(personality)
-                        .secrets(secrets)
-                        .objectives(objectives)
-                        .voiceId(voiceId)
-                        .voicePitch(1.0f)
-                        .voiceSpeed(1.0f)
-                        .currentDisposition(textOr(n.get("currentDisposition"), "neutral"))
-                        .build());
-            }
-        }
+        List<NpcProfile> npcs = r.getNpcs() == null ? List.of() :
+                r.getNpcs().stream().map(n -> {
+                    String npcId = orElse(n.getId(), "npc-" + UUID.randomUUID());
+                    String name = orElse(n.getName(), npcId);
+                    String personality = orElse(n.getPersonality(), "");
+                    String secrets = orElse(n.getSecrets(), "");
+                    String objectives = orElse(n.getObjectives(), "");
+                    String voiceSuggestion = n.getVoiceSuggestion();
+                    String gender = piperVoiceSelector.inferGender(n.getGender(), voiceSuggestion, name, personality, secrets, objectives);
+                    String voiceId = piperVoiceSelector.selectInitialNpcVoice(gender, voiceSuggestion);
+                    return NpcProfile.builder()
+                            .id(npcId).name(name).gender(gender)
+                            .personality(personality).secrets(secrets).objectives(objectives)
+                            .voiceId(voiceId).voicePitch(1.0f).voiceSpeed(1.0f)
+                            .currentDisposition(orElse(n.getCurrentDisposition(), "neutral"))
+                            .build();
+                }).collect(Collectors.toList());
 
-        log.info("Parsing adventure module with {} clues", root.get("clues").size());
-        List<Clue> clues = new ArrayList<>();
-        if (root.has("clues") && root.get("clues").isArray()) {
-            for (JsonNode c : root.get("clues")) {
-                clues.add(Clue.builder()
-                        .id(textOr(c.get("id"), "clue-" + UUID.randomUUID()))
-                        .title(textOr(c.get("title"), "Pista"))
-                        .description(textOr(c.get("description"), ""))
-                        .discoveryCondition(textOr(c.get("discoveryCondition"), ""))
-                        .isCore(c.has("isCore") && c.get("isCore").asBoolean(false))
-                        .build());
-            }
-        }
+        List<Clue> clues = r.getClues() == null ? List.of() :
+                r.getClues().stream().map(c -> Clue.builder()
+                        .id(orElse(c.getId(), "clue-" + UUID.randomUUID()))
+                        .title(orElse(c.getTitle(), "Pista"))
+                        .description(orElse(c.getDescription(), ""))
+                        .discoveryCondition(orElse(c.getDiscoveryCondition(), ""))
+                        .isCore(Boolean.TRUE.equals(c.getIsCore()))
+                        .build()).collect(Collectors.toList());
 
-        log.info("Parsing adventure module with {} acts", root.get("acts").size());
-        List<Act> acts = new ArrayList<>();
-        if (root.has("acts") && root.get("acts").isArray()) {
-            int actIdx = 0;
-            for (JsonNode a : root.get("acts")) {
-                List<Scene> scenes = new ArrayList<>();
-                if (a.has("scenes") && a.get("scenes").isArray()) {
-                    int sceneIdx = 0;
-                    for (JsonNode s : a.get("scenes")) {
-                        List<SceneTransition> transitions = new ArrayList<>();
-                        if (s.has("transitions") && s.get("transitions").isArray()) {
-                            for (JsonNode t : s.get("transitions")) {
-                                transitions.add(SceneTransition.builder()
-                                        .targetSceneId(textOr(t.get("targetSceneId"), null))
-                                        .condition(textOr(t.get("condition"), ""))
-                                        .build());
-                            }
-                        }
-                        scenes.add(Scene.builder()
-                                .id(textOr(s.get("id"), "scene-" + UUID.randomUUID()))
-                                .title(textOr(s.get("title"), "Escena " + (sceneIdx + 1)))
-                                .readAloudText(textOr(s.get("readAloudText"), ""))
-                                .gmNotes(textOr(s.get("gmNotes"), ""))
-                                .orderIndex(s.has("orderIndex") ? s.get("orderIndex").asInt(sceneIdx) : sceneIdx)
-                                .clueIds(stringList(s.get("clueIds")))
-                                .npcIds(stringList(s.get("npcIds")))
-                                .transitions(transitions)
-                                .build());
-                        sceneIdx++;
-                    }
-                }
-                acts.add(Act.builder()
-                        .id(textOr(a.get("id"), "act-" + UUID.randomUUID()))
-                        .title(textOr(a.get("title"), "Acte " + (actIdx + 1)))
-                        .description(textOr(a.get("description"), ""))
-                        .orderIndex(a.has("orderIndex") ? a.get("orderIndex").asInt(actIdx) : actIdx)
-                        .entryConditions(stringList(a.get("entryConditions")))
-                        .scenes(scenes)
-                        .build());
-                actIdx++;
-            }
-        }
+        List<Act> acts = r.getActs() == null ? List.of() :
+                buildActs(r.getActs());
+
         log.info("Parsed adventure module with {} acts, {} NPCs, {} clues", acts.size(), npcs.size(), clues.size());
         return AdventureModule.builder()
-                .id(moduleId)
-                .title(title)
-                .system(system)
-                .synopsis(synopsis)
-                .worldId(worldId)
-                .acts(acts)
-                .npcs(npcs)
-                .clues(clues)
+                .id(moduleId).title(title).system(system).synopsis(synopsis)
+                .worldId(worldId).acts(acts).npcs(npcs).clues(clues)
                 .build();
     }
 
-    private static String textOr(JsonNode node, String fallback) {
-        if (node == null || node.isNull()) return fallback;
-        String s = node.asText("");
-        return s.isEmpty() ? fallback : s;
+    private List<Act> buildActs(List<AdventureStructureResponse.ActDto> actDtos) {
+        List<Act> acts = new java.util.ArrayList<>();
+        int actIdx = 0;
+        for (AdventureStructureResponse.ActDto a : actDtos) {
+            List<Scene> scenes = a.getScenes() == null ? List.of() : buildScenes(a.getScenes());
+            acts.add(Act.builder()
+                    .id(orElse(a.getId(), "act-" + UUID.randomUUID()))
+                    .title(orElse(a.getTitle(), "Acte " + (actIdx + 1)))
+                    .description(orElse(a.getDescription(), ""))
+                    .orderIndex(a.getOrderIndex() != null ? a.getOrderIndex() : actIdx)
+                    .entryConditions(a.getEntryConditions() != null ? a.getEntryConditions() : List.of())
+                    .scenes(scenes)
+                    .build());
+            actIdx++;
+        }
+        return acts;
     }
 
-    private static List<String> stringList(JsonNode node) {
-        List<String> out = new ArrayList<>();
-        if (node != null && node.isArray()) {
-            node.forEach(n -> {
-                if (n != null && !n.isNull()) out.add(n.asText(""));
-            });
+    private List<Scene> buildScenes(List<AdventureStructureResponse.SceneDto> sceneDtos) {
+        List<Scene> scenes = new java.util.ArrayList<>();
+        int sceneIdx = 0;
+        for (AdventureStructureResponse.SceneDto s : sceneDtos) {
+            List<SceneTransition> transitions = s.getTransitions() == null ? List.of() :
+                    s.getTransitions().stream().map(t -> SceneTransition.builder()
+                            .targetSceneId(t.getTargetSceneId())
+                            .condition(orElse(t.getCondition(), ""))
+                            .build()).collect(Collectors.toList());
+            scenes.add(Scene.builder()
+                    .id(orElse(s.getId(), "scene-" + UUID.randomUUID()))
+                    .title(orElse(s.getTitle(), "Escena " + (sceneIdx + 1)))
+                    .readAloudText(orElse(s.getReadAloudText(), ""))
+                    .gmNotes(orElse(s.getGmNotes(), ""))
+                    .orderIndex(s.getOrderIndex() != null ? s.getOrderIndex() : sceneIdx)
+                    .clueIds(s.getClueIds() != null ? s.getClueIds() : List.of())
+                    .npcIds(s.getNpcIds() != null ? s.getNpcIds() : List.of())
+                    .transitions(transitions)
+                    .build());
+            sceneIdx++;
         }
-        return out;
+        return scenes;
     }
 
-    private static String stripMarkdownFence(String s) {
-        if (s == null) return "{}";
-        String trimmed = s.trim();
-        if (trimmed.startsWith("```")) {
-            int newline = trimmed.indexOf('\n');
-            if (newline > -1) trimmed = trimmed.substring(newline + 1);
-            if (trimmed.endsWith("```")) trimmed = trimmed.substring(0, trimmed.length() - 3);
+    private static String orElse(String value, String fallback) {
+        return (value == null || value.isBlank()) ? fallback : value;
+    }
+
+    // ── Structured output types ─────────────────────────────────────────
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class AdventureStructureResponse {
+        private String title;
+        private String system;
+        private String synopsis;
+        private List<ActDto> acts;
+        private List<NpcDto> npcs;
+        private List<ClueDto> clues;
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class ActDto {
+            private String id;
+            private String title;
+            private String description;
+            private Integer orderIndex;
+            private List<String> entryConditions;
+            private List<SceneDto> scenes;
         }
-        return trimmed.trim();
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class SceneDto {
+            private String id;
+            private String title;
+            private String readAloudText;
+            private String gmNotes;
+            private Integer orderIndex;
+            private List<String> clueIds;
+            private List<String> npcIds;
+            private List<TransitionDto> transitions;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class TransitionDto {
+            private String targetSceneId;
+            private String condition;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class NpcDto {
+            private String id;
+            private String name;
+            private String gender;
+            private String personality;
+            private String secrets;
+            private String objectives;
+            private String voiceSuggestion;
+            private String currentDisposition;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class ClueDto {
+            private String id;
+            private String title;
+            private String description;
+            private String discoveryCondition;
+            private Boolean isCore;
+        }
     }
 }

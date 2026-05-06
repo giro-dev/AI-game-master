@@ -6,7 +6,6 @@ import dev.agiro.masterserver.dto.CreateCharacterRequest;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -28,6 +27,7 @@ public class FieldFillerAgent {
     private final SystemProfileService systemProfileService;
     private final SystemAwarePromptBuilder promptBuilder;
     private final GameMasterManualSolver gameMasterManualSolver;
+    private final RAGService ragService;
 
     private static final String FALLBACK_FILL_FIELDS_PROMPT = """
             You are an expert at filling character sheet fields for tabletop RPG systems.
@@ -45,6 +45,7 @@ public class FieldFillerAgent {
             - Before responding, verify the arithmetic: add up all numeric values for budget-constrained groups
             - Distribute values wisely based on the character concept
             - Use the character concept to inform your choices
+            - Use the available tools to look up system-specific rules or field guidance if needed.
             
             RESPONSE FORMAT: valid JSON - a flat object with field paths as keys.
             Language: {language}
@@ -54,17 +55,17 @@ public class FieldFillerAgent {
                             ObjectMapper objectMapper,
                             SystemProfileService systemProfileService,
                             SystemAwarePromptBuilder promptBuilder,
-                            GameMasterManualSolver gameMasterManualSolver) {
+                            GameMasterManualSolver gameMasterManualSolver,
+                            RAGService ragService,
+                            ModelRoutingService modelRoutingService) {
         this.chatClient = chatClientBuilder
-                .defaultOptions(ChatOptions.builder()
-                        .model("gpt-4o-mini")
-                        .temperature(0.8)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("field-filler"))
                 .build();
         this.objectMapper = objectMapper;
         this.systemProfileService = systemProfileService;
         this.promptBuilder = promptBuilder;
         this.gameMasterManualSolver = gameMasterManualSolver;
+        this.ragService = ragService;
     }
 
     /**
@@ -81,13 +82,9 @@ public class FieldFillerAgent {
         String systemId = request.getBlueprint().getSystemId();
         SystemProfileDto profile = resolveProfile(systemId);
 
-        // Build system context once
-        String systemContext;
-        if (profile != null) {
-            systemContext = promptBuilder.buildSystemContext(profile);
-        } else {
-            systemContext = getActorTypeGuidance(request.getActorType(), systemId);
-        }
+        // When a profile is available use it for deterministic context;
+        // otherwise the LLM can query the manuals via the registered @Tool methods.
+        String systemContext = (profile != null) ? promptBuilder.buildSystemContext(profile) : "";
 
         // Group fields: profile-based dynamic grouping or legacy fallback
         Map<String, List<CharacterBlueprintDto.FieldDto>> fieldGroups;
@@ -333,32 +330,22 @@ public class FieldFillerAgent {
                 ? promptBuilder.buildFillFieldsPrompt(profile, language)
                 : FALLBACK_FILL_FIELDS_PROMPT.replace("{language}", language);
 
-        String responseJson = chatClient.prompt()
+        Map<String, Object> result = chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt.toString()))
+                .tools(ragService, gameMasterManualSolver)
                 .call()
-                .content();
+                .entity(new org.springframework.core.ParameterizedTypeReference<>() {});
 
-        responseJson = cleanJsonResponse(responseJson);
-        log.debug("Field group response: {}", responseJson);
-
-        return objectMapper.readValue(responseJson, Map.class);
+        if (result == null) {
+            return Map.of();
+        }
+        log.debug("Field group response: {} keys", result.size());
+        return result;
     }
 
     private SystemProfileDto resolveProfile(String systemId) {
         return systemProfileService.getProfile(systemId).orElse(null);
-    }
-
-    private String getActorTypeGuidance(String actorType, String systemId) {
-        try {
-            return gameMasterManualSolver.solveDoubt(
-                    String.format("How do I create a %s in this game system? What are the rules and important considerations?", actorType),
-                    systemId
-            );
-        } catch (Exception e) {
-            log.warn("Failed to retrieve actor type guidance", e);
-            return "";
-        }
     }
 
     private Map<String, List<CharacterBlueprintDto.FieldDto>> groupFieldsFromProfile(
@@ -434,19 +421,5 @@ public class FieldFillerAgent {
         }
 
         return groups;
-    }
-
-    private String cleanJsonResponse(String response) {
-        if (response == null) return "{}";
-        response = response.trim();
-        if (response.startsWith("```json")) {
-            response = response.substring(7);
-        } else if (response.startsWith("```")) {
-            response = response.substring(3);
-        }
-        if (response.endsWith("```")) {
-            response = response.substring(0, response.length() - 3);
-        }
-        return response.trim();
     }
 }

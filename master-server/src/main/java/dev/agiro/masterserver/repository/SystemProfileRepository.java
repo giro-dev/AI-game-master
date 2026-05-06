@@ -1,4 +1,4 @@
-package dev.agiro.masterserver.service;
+package dev.agiro.masterserver.repository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.SystemProfileDto;

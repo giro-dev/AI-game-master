@@ -99,12 +99,7 @@ public class DocumentClassifier {
     }
 
     private String cleanJson(String raw) {
-        if (raw == null) return "[]";
-        raw = raw.trim();
-        if (raw.startsWith("```json")) raw = raw.substring(7);
-        else if (raw.startsWith("```")) raw = raw.substring(3);
-        if (raw.endsWith("```")) raw = raw.substring(0, raw.length() - 3);
-        return raw.trim();
+        return dev.agiro.masterserver.util.JsonUtils.stripMarkdownFences(raw, "[]");
     }
 }
 

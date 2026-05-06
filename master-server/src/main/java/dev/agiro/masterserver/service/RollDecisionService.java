@@ -5,14 +5,13 @@ import dev.agiro.masterserver.dto.WorldStateDto;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
-
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 
 @Slf4j
 @Service
@@ -49,31 +48,28 @@ public class RollDecisionService {
                 .build();
     }
 
+    @Tool(description = "Decide whether a player's action requires a dice roll. Returns a RollDecision describing the roll type, skill, ability, and difficulty if a roll is needed.")
     public RollDecision decide(String transcription,
                                String gameSystem,
                                String sceneContext,
                                String recentDecisions,
                                WorldStateDto worldState) {
-        QuestionAnswerAdvisor advisor = QuestionAnswerAdvisor.builder(vectorStore)
-                .searchRequest(SearchRequest.builder()
-                        .similarityThreshold(0.4d)
-                        .topK(4)
-                        .filterExpression("foundry_system == '%s'".formatted(gameSystem))
-                        .build())
-                .build();
-
-        String systemPromptText;
-        try {
-            systemPromptText = systemPrompt.getContentAsString(StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            log.warn("Could not load roll_decision_system.txt: {}", e.getMessage());
-            return RollDecision.builder().needsRoll(false).reasoning("System prompt unavailable").build();
+        FilterExpressionBuilder b = new FilterExpressionBuilder();
+        SearchRequest.Builder searchBuilder = SearchRequest.builder()
+                .similarityThreshold(0.4d)
+                .topK(4);
+        if (gameSystem != null && !gameSystem.isBlank()) {
+            searchBuilder.filterExpression(b.eq("foundry_system", gameSystem).build());
         }
+
+        QuestionAnswerAdvisor advisor = QuestionAnswerAdvisor.builder(vectorStore)
+                .searchRequest(searchBuilder.build())
+                .build();
 
         try {
             RollDecision decision = modelRoutingService.timed("roll-decision", null, () ->
                     chatClient.prompt()
-                            .system(systemPromptText)
+                            .system(s -> s.text(systemPrompt))
                             .advisors(advisor)
                             .user(u -> u.text(USER_TEMPLATE)
                                     .param("gameSystem", gameSystem == null ? "unknown" : gameSystem)

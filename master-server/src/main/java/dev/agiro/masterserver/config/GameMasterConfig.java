@@ -18,13 +18,5 @@ public class GameMasterConfig {
     public static class Chat {
         private String defaultModel;
         private String defaultLanguage;
-
-        public String getDefaultModel() {
-            return defaultModel;
-        }
-
-        public void setDefaultModel(String defaultModel) {
-            this.defaultModel = defaultModel;
-        }
     }
 }
