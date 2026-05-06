@@ -1,9 +1,20 @@
 package dev.agiro.masterserver.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.agiro.masterserver.dto.AdventureSceneDto;
+import dev.agiro.masterserver.dto.DirectorRequest;
+import dev.agiro.masterserver.dto.DirectorResponse;
 import dev.agiro.masterserver.dto.ItemGenerationRequest;
 import dev.agiro.masterserver.dto.ItemGenerationResponse;
+import dev.agiro.masterserver.dto.NpcDialogueDto;
 import dev.agiro.masterserver.dto.WebSocketMessage;
+import dev.agiro.masterserver.model.AdventureModule;
+import dev.agiro.masterserver.model.AdventureSession;
+import dev.agiro.masterserver.model.Scene;
+import dev.agiro.masterserver.repository.AdventureModuleRepository;
+import dev.agiro.masterserver.repository.AdventureSessionRepository;
+import dev.agiro.masterserver.service.AdventureDirectorService;
+import dev.agiro.masterserver.service.AdventureSessionService;
 import dev.agiro.masterserver.service.ItemGenerationService;
 import dev.agiro.masterserver.service.TranscriptionService;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +23,10 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * WebSocket controller for real-time bidirectional communication with Foundry VTT
@@ -24,15 +39,27 @@ public class WebSocketController {
     private final ItemGenerationService itemGenerationService;
     private final ObjectMapper objectMapper;
     private final TranscriptionService transcriptionService;
+    private final AdventureDirectorService adventureDirectorService;
+    private final AdventureSessionRepository adventureSessionRepository;
+    private final AdventureModuleRepository adventureModuleRepository;
+    private final AdventureSessionService adventureSessionService;
 
     public WebSocketController(SimpMessagingTemplate messagingTemplate,
                                ItemGenerationService itemGenerationService,
                                ObjectMapper objectMapper,
-                               TranscriptionService transcriptionService) {
+                               TranscriptionService transcriptionService,
+                               AdventureDirectorService adventureDirectorService,
+                               AdventureSessionRepository adventureSessionRepository,
+                               AdventureModuleRepository adventureModuleRepository,
+                               AdventureSessionService adventureSessionService) {
         this.messagingTemplate = messagingTemplate;
         this.itemGenerationService = itemGenerationService;
         this.objectMapper = objectMapper;
         this.transcriptionService = transcriptionService;
+        this.adventureDirectorService = adventureDirectorService;
+        this.adventureSessionRepository = adventureSessionRepository;
+        this.adventureModuleRepository = adventureModuleRepository;
+        this.adventureSessionService = adventureSessionService;
     }
 
     /**
@@ -151,5 +178,148 @@ public class WebSocketController {
     public void sendIngestionUpdate(String sessionId, WebSocketMessage message) {
         log.info("Sending ingestion update to session {}: {}", sessionId, message.getType());
         messagingTemplate.convertAndSend("/queue/ingestion-" + sessionId, message);
+    }
+
+    /* ────────────────────────────────────────────────────────────────────
+     * Adventure Director
+     * ────────────────────────────────────────────────────────────────────*/
+
+    /**
+     * Handle a streamed transcription chunk (or completed transcription) from the client.
+     * Payload may either contain an already-transcribed {@code transcription} string or
+     * the raw audio in {@code audioBase64}; in the latter case we run STT first.
+     */
+    @MessageMapping("/adventure/transcription")
+    public void handleAdventureTranscription(@Payload WebSocketMessage message) {
+        log.info("Adventure transcription request from session {}", message.getSessionId());
+        DirectorRequest request = objectMapper.convertValue(message.getPayload(), DirectorRequest.class);
+
+        if ((request.getTranscription() == null || request.getTranscription().isBlank())
+                && message.getPayload() instanceof Map<?, ?> raw
+                && raw.get("audioBase64") instanceof String b64) {
+            byte[] audio = Base64.getDecoder().decode(b64);
+            request.setTranscription(transcriptionService.transcribeAudio(audio));
+        }
+
+        // Echo the transcription so the UI can show what we heard.
+        log.info("Received transcription for adventure session {}: {}", request.getAdventureSessionId(), request.getTranscription());
+        Map<String, Object> trPayload = new HashMap<>();
+        trPayload.put("transcription", request.getTranscription());
+        trPayload.put("adventureSessionId", request.getAdventureSessionId());
+        sendAdventureUpdate(request.getAdventureSessionId(), WebSocketMessage.success(
+                WebSocketMessage.MessageType.TRANSCRIPTION_RECEIVED,
+                request.getAdventureSessionId(),
+                trPayload));
+
+        log.info("Processing director request for adventure session {} with transcription: {}",
+                request.getAdventureSessionId(), request.getTranscription());
+        DirectorResponse response = adventureDirectorService.process(request);
+        dispatchDirectorResponse(request.getAdventureSessionId(), response);
+    }
+
+    /** Resolve a previously-sent INTENT_CONFIRMATION_REQUEST with the player's reply. */
+    @MessageMapping("/adventure/confirm")
+    public void handleAdventureConfirm(@Payload WebSocketMessage message) {
+        log.info("Adventure confirmation from session {}", message.getSessionId());
+        DirectorRequest request = objectMapper.convertValue(message.getPayload(), DirectorRequest.class);
+
+        WebSocketMessage.MessageType ack =
+                request.getConfirmationResponse() != null
+                        && (request.getConfirmationResponse().toLowerCase().startsWith("y")
+                            || "si".equalsIgnoreCase(request.getConfirmationResponse())
+                            || "sí".equalsIgnoreCase(request.getConfirmationResponse()))
+                ? WebSocketMessage.MessageType.INTENT_CONFIRMED
+                : WebSocketMessage.MessageType.INTENT_REJECTED;
+        sendAdventureUpdate(request.getAdventureSessionId(), WebSocketMessage.success(
+                ack, request.getAdventureSessionId(), Map.of("response", request.getConfirmationResponse())));
+
+        DirectorResponse response = adventureDirectorService.process(request);
+        dispatchDirectorResponse(request.getAdventureSessionId(), response);
+    }
+
+    public void sendDirectorUpdate(String sessionId, WebSocketMessage message) {
+        log.info("Sending director update to adventure session {}: {}", sessionId, message.getType());
+        sendAdventureUpdate(sessionId, message);
+    }
+
+    public void sendNpcAudio(String sessionId, WebSocketMessage message) {
+        log.info("Sending NPC audio to adventure session {}", sessionId);
+        sendAdventureUpdate(sessionId, message);
+    }
+
+    private void dispatchDirectorResponse(String sessionId, DirectorResponse response) {
+        if (sessionId == null || response == null) return;
+
+        if (response.isConfirmationNeeded()) {
+            sendAdventureUpdate(sessionId, WebSocketMessage.success(
+                    WebSocketMessage.MessageType.INTENT_CONFIRMATION_REQUEST,
+                    sessionId,
+                    Map.of(
+                            "question", response.getConfirmationQuestion(),
+                            "reasoning", response.getReasoning() == null ? "" : response.getReasoning()
+                    )));
+            return;
+        }
+
+        Map<String, Object> narrationPayload = new HashMap<>();
+        narrationPayload.put("narration", response.getNarration() == null ? "" : response.getNarration());
+        narrationPayload.put("actions", response.getActions());
+        narrationPayload.put("reasoning", response.getReasoning() == null ? "" : response.getReasoning());
+        if (response.getNarrationAudioUrl() != null) {
+            narrationPayload.put("narrationAudioUrl", response.getNarrationAudioUrl());
+        }
+        if (response.getNarrationAudioBase64() != null) {
+            narrationPayload.put("narrationAudioBase64", response.getNarrationAudioBase64());
+        }
+        sendAdventureUpdate(sessionId, WebSocketMessage.success(
+                WebSocketMessage.MessageType.DIRECTOR_NARRATION,
+                sessionId,
+                narrationPayload));
+
+        if (response.getNpcDialogues() != null) {
+            for (NpcDialogueDto d : response.getNpcDialogues()) {
+                sendAdventureUpdate(sessionId, WebSocketMessage.success(
+                        WebSocketMessage.MessageType.NPC_DIALOGUE_AUDIO,
+                        sessionId,
+                        d));
+            }
+        }
+
+        if (response.getStateUpdates() != null) {
+            sendAdventureUpdate(sessionId, WebSocketMessage.success(
+                    WebSocketMessage.MessageType.ADVENTURE_STATE_UPDATE,
+                    sessionId,
+                    response.getStateUpdates()));
+            if (response.getStateUpdates().getTransitionTriggered() != null
+                    && !response.getStateUpdates().getTransitionTriggered().isBlank()) {
+                Map<String, Object> transitionPayload = new HashMap<>();
+                transitionPayload.put("targetSceneId", response.getStateUpdates().getTransitionTriggered());
+                resolveScenePayload(sessionId, response.getStateUpdates().getTransitionTriggered()).ifPresent(scene -> {
+                    transitionPayload.put("title", scene.getTitle());
+                    transitionPayload.put("readAloudText", scene.getReadAloudText());
+                });
+                sendAdventureUpdate(sessionId, WebSocketMessage.success(
+                        WebSocketMessage.MessageType.SCENE_TRANSITION,
+                        sessionId,
+                        transitionPayload));
+            }
+        }
+    }
+
+    private void sendAdventureUpdate(String sessionId, WebSocketMessage message) {
+        if (sessionId == null) return;
+        messagingTemplate.convertAndSend("/queue/adventure-" + sessionId, message);
+    }
+
+    private java.util.Optional<AdventureSceneDto> resolveScenePayload(String sessionId, String sceneId) {
+        AdventureSession session = adventureSessionRepository.findById(sessionId).orElse(null);
+        if (session == null) return java.util.Optional.empty();
+        AdventureModule module = adventureModuleRepository.findById(session.getAdventureModuleId()).orElse(null);
+        if (module == null) return java.util.Optional.empty();
+        return adventureSessionService.findScene(module, sceneId)
+                .map(scene -> AdventureSceneDto.builder()
+                        .title(scene.getTitle())
+                        .readAloudText(scene.getReadAloudText() == null ? "" : scene.getReadAloudText())
+                        .build());
     }
 }

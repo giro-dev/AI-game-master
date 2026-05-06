@@ -1,18 +1,9 @@
 package dev.agiro.masterserver.controller;
 
-import dev.agiro.masterserver.dto.GameMasterRequest;
-import dev.agiro.masterserver.dto.GameMasterResponse;
-import dev.agiro.masterserver.dto.RagSearchResponse;
 import dev.agiro.masterserver.service.GameMasterManualSolver;
-import dev.agiro.masterserver.service.GameMasterService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.document.Document;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.ArrayList;
-import java.util.List;
 
 @Slf4j
 @RestController

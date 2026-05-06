@@ -5,6 +5,7 @@
     <a class="item" data-tab="items"><i class="fas fa-hat-wizard"></i> Items</a>
     <a class="item" data-tab="library"><i class="fas fa-book"></i> Library</a>
     <a class="item" data-tab="session"><i class="fas fa-comments"></i> Session</a>
+    <a class="item" data-tab="adventure"><i class="fas fa-dragon"></i> Adventure</a>
     <a class="item" data-tab="system"><i class="fas fa-cogs"></i> System</a>
   </nav>
 
@@ -140,6 +141,25 @@
         </button>
       </div>
 
+      <h4 class="section-header">Ingest a Compendium</h4>
+      <div class="form-group">
+        <label for="gm-knowledge-pack">Compendium</label>
+        <select id="gm-knowledge-pack">
+          {{#each knowledgePacks}}
+          <option value="{{this.id}}">{{this.label}} ({{this.documentName}})</option>
+          {{/each}}
+          {{#unless knowledgePacks.length}}
+          <option value="" disabled>No compendiums available</option>
+          {{/unless}}
+        </select>
+        <p class="hint">Index a Foundry compendium as RAG knowledge for this world.</p>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary btn-block" data-action="ingest-compendium">
+          <i class="fas fa-database"></i> Ingest Compendium
+        </button>
+      </div>
+
       {{!-- Ingestion Progress --}}
       <div class="progress-container" id="ingest-progress">
         <div class="progress-status">
@@ -156,7 +176,8 @@
         {{#each books}}
         <div class="book-entry" data-book-id="{{this.bookId}}">
           <div>
-            <strong>{{this.bookTitle}}</strong>
+            <strong>{{this.displayTitle}}</strong>
+            <span class="book-meta">{{this.sourceLabel}}</span>
             <span class="book-meta">{{this.status}}</span>
             {{#if this.chunkCount}}
             <span class="book-meta">({{this.chunkCount}} chunks, {{this.entityCount}} entities)</span>
@@ -231,6 +252,158 @@
           <i class="fas fa-paper-plane"></i> Ask AI
         </button>
       </div>
+    </div>
+
+    {{!-- ═══ ADVENTURE TAB ═══ --}}
+    <div class="tab" data-tab="adventure" data-group="primary">
+      <h4 class="section-header">Adventure Director</h4>
+      <p class="hint">Carrega una aventura, inicia una sessió i deixa que el director narri en temps real.</p>
+
+      <div class="form-group">
+        <label for="adventure-select">Aventura</label>
+        <select id="adventure-select" {{#if adventureSessionActive}}disabled{{/if}}>
+          <option value="">— Selecciona una aventura —</option>
+          {{#each adventures}}
+            <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.title}} ({{this.system}})</option>
+          {{/each}}
+        </select>
+      </div>
+
+      <div class="form-group" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button type="button" class="btn" data-action="upload-adventure" {{#if adventureSessionActive}}disabled{{/if}}>
+          <i class="fas fa-upload"></i> Pujar PDF d'aventura
+        </button>
+        {{#unless adventureSessionActive}}
+          <button type="button" class="btn btn-primary" data-action="start-adventure" {{#unless adventureSelected}}disabled{{/unless}}>
+            <i class="fas fa-play"></i> Iniciar aventura
+          </button>
+        {{/unless}}
+        {{#if adventureSessionActive}}
+          <button type="button" class="btn" data-action="end-adventure">
+            <i class="fas fa-stop"></i> Finalitzar
+          </button>
+        {{/if}}
+      </div>
+
+      {{#if adventureSelected}}
+        {{#unless adventureSessionActive}}
+        {{#if adventureSavedSessions.length}}
+          <div class="adventure-history" style="margin-top:8px;">
+            <h5 class="section-header">Sessions anteriors</h5>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              {{#each adventureSavedSessions}}
+                <div style="border:1px solid var(--color-border-light-tertiary);border-radius:6px;padding:8px;background:var(--color-bg-option);">
+                  <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+                    <div style="min-width:0;flex:1;">
+                      <strong>{{this.sessionName}}</strong>
+                      {{#if this.currentSceneTitle}}
+                        <div class="hint">Escena actual: {{this.currentSceneTitle}}</div>
+                      {{/if}}
+                      {{#if this.participantNamesText}}
+                        <div class="hint">Jugadors: {{this.participantNamesText}}</div>
+                      {{/if}}
+                      {{#if this.sessionSummary}}
+                        <div style="margin-top:4px;white-space:pre-wrap;">{{this.sessionSummary}}</div>
+                      {{/if}}
+                      <div class="hint" style="margin-top:4px;">
+                        Tensió: {{this.tensionLevel}} / 10
+                        {{#if this.updatedAtLabel}} · Actualitzada: {{this.updatedAtLabel}}{{/if}}
+                      </div>
+                    </div>
+                    <button type="button" class="btn" data-action="resume-adventure" data-session-id="{{this.id}}">
+                      <i class="fas fa-rotate-left"></i> Reprendre
+                    </button>
+                  </div>
+                </div>
+              {{/each}}
+            </div>
+          </div>
+        {{/if}}
+        {{/unless}}
+      {{/if}}
+
+      {{#if adventureSessionActive}}
+        <div class="adventure-session" style="border:1px solid var(--color-border-light-tertiary);padding:8px;border-radius:6px;margin-top:8px;">
+          {{#if adventureSessionName}}
+            <h4 class="section-header">{{adventureSessionName}}</h4>
+          {{/if}}
+          {{#if adventureSessionParticipants.length}}
+            <div class="hint" style="margin-bottom:6px;">Jugadors: {{#each adventureSessionParticipants}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</div>
+          {{/if}}
+          {{#if adventureSessionSummary}}
+            <div style="margin-bottom:8px;padding:6px 8px;background:var(--color-bg-option);border-radius:4px;white-space:pre-wrap;">{{adventureSessionSummary}}</div>
+          {{/if}}
+          {{#if adventureScene}}
+            <h4 class="section-header">{{adventureScene.title}}</h4>
+            <div class="read-aloud" style="font-style:italic;white-space:pre-wrap;border-left:3px solid var(--color-text-hyperlink);padding:6px 10px;margin-bottom:8px;">{{adventureScene.readAloudText}}</div>
+          {{/if}}
+
+          <div class="adventure-status" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div>
+              <strong>Pistes descobertes</strong>
+              <ul style="margin:4px 0 0 1rem;padding:0;">
+                {{#each discoveredClues}}<li>{{this}}</li>{{else}}<li class="hint">cap encara</li>{{/each}}
+              </ul>
+            </div>
+            <div>
+              <strong>NPCs trobats</strong>
+              <ul style="margin:4px 0 0 1rem;padding:0;">
+                {{#each metNpcs}}<li>{{this}}</li>{{else}}<li class="hint">cap encara</li>{{/each}}
+              </ul>
+            </div>
+          </div>
+
+          {{!-- NPC list with create-actor buttons --}}
+          {{#if adventureNpcs.length}}
+          <div style="margin-bottom:8px;">
+            <strong><i class="fas fa-users"></i> NPCs de l'aventura</strong>
+            <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px;">
+              {{#each adventureNpcs}}
+              <div style="display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;background:var(--color-bg-option);">
+                <i class="fas fa-user" style="opacity:0.6;"></i>
+                <span style="flex:1;font-size:0.9em;">
+                  <strong>{{this.name}}</strong>
+                  {{#if this.currentDisposition}}<span class="hint">({{this.currentDisposition}})</span>{{/if}}
+                </span>
+                <button type="button" class="btn btn-sm" data-action="create-adventure-npc" data-npc-id="{{this.id}}" title="Crear actor a Foundry">
+                  <i class="fas fa-user-plus"></i>
+                </button>
+              </div>
+              {{/each}}
+            </div>
+          </div>
+          {{/if}}
+
+          <div class="tension" style="margin-bottom:8px;">
+            <label><strong>Tensió</strong> {{tensionLevel}} / {{tensionMax}}</label>
+            <div style="background:var(--color-bg-option);height:10px;border-radius:5px;overflow:hidden;border:1px solid var(--color-border-dark-tertiary);">
+              <div style="height:100%;width:{{tensionPct}}%;background:linear-gradient(90deg,#4caf50,#ff9800,#f44336);"></div>
+            </div>
+          </div>
+
+          {{#if speakingNpc}}
+            <div class="npc-speaking" style="background:var(--color-bg-option);padding:6px 8px;border-radius:4px;margin-bottom:8px;">
+              <i class="fas fa-volume-up"></i> <strong>{{speakingNpc.npcName}}</strong> està parlant…
+            </div>
+          {{/if}}
+
+          <div class="form-group" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="btn {{#if isRecording}}btn-danger{{/if}}" data-action="toggle-mic" style="flex-shrink:0;">
+              <i class="fas fa-microphone{{#if isRecording}}-slash{{/if}}"></i>
+            </button>
+            <input type="text" id="adventure-text-input" placeholder="Escriu la teva acció…" style="flex:1;min-width:120px;" {{#if isProcessing}}disabled{{/if}} />
+            <button type="button" class="btn" data-action="send-adventure-text" style="flex-shrink:0;" {{#if isProcessing}}disabled{{/if}}>
+              <i class="fas fa-paper-plane"></i>
+            </button>
+            {{#if isProcessing}}<span class="hint" style="width:100%;"><i class="fas fa-spinner fa-spin"></i> Processant…</span>{{/if}}
+          </div>
+
+          <h5 class="section-header" style="margin-top:8px;">Registre</h5>
+          <div class="adventure-log" style="max-height:240px;overflow-y:auto;border:1px solid var(--color-border-light-tertiary);padding:6px;border-radius:4px;font-size:0.9em;">
+            {{#each adventureLog}}<div style="margin-bottom:4px;">{{this}}</div>{{else}}<div class="hint">Encara no hi ha res…</div>{{/each}}
+          </div>
+        </div>
+      {{/if}}
     </div>
 
     {{!-- ═══ SYSTEM TAB ═══ --}}
@@ -331,6 +504,24 @@
       </p>
       {{/if}}
 
+      <div class="profile-grid" style="margin-top:0.75rem;">
+        <div class="profile-card" style="grid-column: 1 / -1;">
+          <h5>Set from world actor</h5>
+          <div class="form-group" style="margin-bottom:0.5rem;">
+            <label for="ai-gm-reference-actor">Actor</label>
+            <select id="ai-gm-reference-actor">
+              <option value="">— Select an actor —</option>
+              {{#each availableReferenceActors}}
+              <option value="{{this.id}}">{{this.name}} ({{this.type}} · {{this.itemCount}} items)</option>
+              {{/each}}
+            </select>
+          </div>
+          <button type="button" class="btn btn-block" data-action="set-reference-character">
+            <i class="fas fa-user-check"></i> Use selected actor as reference
+          </button>
+        </div>
+      </div>
+
       <h4 class="section-header">System Skills</h4>
       <p class="hint">Skills are per-system adapters that fine-tune schema extraction and AI generation. Import a JSON skill or create one to customize behaviour for non-standard systems.</p>
 
@@ -402,4 +593,3 @@
 
   </section>
 </div>
-

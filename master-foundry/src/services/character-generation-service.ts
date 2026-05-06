@@ -18,6 +18,15 @@ interface RequestParams {
     blueprint: CharacterBlueprint;
     language: string;
     sessionId?: string | null;
+    worldId?: string | null;
+    referenceCharacter?: {
+        systemId: string;
+        actorType: string;
+        label: string;
+        actorData: Record<string, any>;
+        items: Array<Record<string, any>>;
+        capturedAt?: number;
+    } | null;
 }
 
 export class CharacterGenerationService {
@@ -63,7 +72,9 @@ export class CharacterGenerationService {
             actorType: params.actorType,
             blueprint: params.blueprint,
             language: params.language || 'en',
-            sessionId: params.sessionId || undefined
+            sessionId: params.sessionId || undefined,
+            worldId: params.worldId || undefined,
+            referenceCharacter: params.referenceCharacter || undefined
         };
     }
 
@@ -93,4 +104,3 @@ export class CharacterGenerationService {
         };
     }
 }
-

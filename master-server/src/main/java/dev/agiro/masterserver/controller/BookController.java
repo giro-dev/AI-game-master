@@ -1,6 +1,7 @@
 package dev.agiro.masterserver.controller;
 
 import dev.agiro.masterserver.dto.BookDto;
+import dev.agiro.masterserver.dto.CompendiumIngestionRequest;
 import dev.agiro.masterserver.pdf_extractor.IngestionPipeline;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +70,25 @@ public class BookController {
         ));
     }
 
+    @PostMapping(value = "/compendium", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, Object>> ingestCompendium(@RequestBody CompendiumIngestionRequest request) {
+        if (request.getPackId() == null || request.getPackId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "packId is required"));
+        }
+        if (request.getEntries() == null || request.getEntries().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Compendium entries are required"));
+        }
+
+        ingestionPipeline.ingestCompendiumAsync(request);
+
+        return ResponseEntity.accepted().body(Map.of(
+                "message", "Compendium ingestion started",
+                "packId", request.getPackId(),
+                "packLabel", request.getPackLabel(),
+                "entryCount", request.getEntries().size()
+        ));
+    }
+
     /**
      * List all books associated with a given world.
      */
@@ -96,4 +116,3 @@ public class BookController {
         return ResponseEntity.ok(Map.of("message", "Book deleted", "bookId", bookId));
     }
 }
-

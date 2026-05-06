@@ -36,6 +36,33 @@ services:
     depends_on:
       - opensearch
 
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cuda
+    environment:
+      - WHISPER__MODEL=Systran/faster-whisper-large-v3
+      - WHISPER__INFERENCE_DEVICE=cuda
+    ports:
+      - "9300:8000"
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  piper-tts:
+    image: rhasspy/wyoming-piper:latest
+    command: --voice ca_ES-upc_ona-medium --data-dir /data --download-dir /data
+    ports:
+      - "10200:10200"
+    volumes:
+      - ../piper-voices:/data
+
 volumes:
   postgres-data:
   opensearch-data:
+  whisper-models:
+  piper-voices:

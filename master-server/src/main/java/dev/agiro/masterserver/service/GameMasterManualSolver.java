@@ -6,7 +6,6 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.SystemPromptTemplate;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -24,12 +23,15 @@ public class GameMasterManualSolver {
     private final GameMasterConfig config;
     private final ChatMemory chatMemory;
 
-    public GameMasterManualSolver(VectorStore vectorStore, ChatClient.Builder builder, GameMasterConfig config, ChatMemory chatMemory) {
+    public GameMasterManualSolver(VectorStore vectorStore,
+                                  ChatClient.Builder builder,
+                                  GameMasterConfig config,
+                                  ChatMemory chatMemory,
+                                  ModelRoutingService modelRoutingService) {
         this.vectorStore = vectorStore;
-        this.chatClient = builder.defaultOptions(ChatOptions.builder()
-                        .model(config.getChat().getDefaultModel())
-                        .temperature(0.7)
-                        .build()).build();
+        this.chatClient = builder
+                .defaultOptions(modelRoutingService.optionsFor("manual-answer"))
+                .build();
         this.config = config;
         this.chatMemory = chatMemory;
     }

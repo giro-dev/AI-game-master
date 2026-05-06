@@ -17,9 +17,10 @@ public class BookDto {
     private String foundrySystem;
     private String bookTitle;
     private String fileName;
+    private String sourceType;
+    private String sourceId;
     private Instant uploadDate;
     private int chunkCount;
     private int entityCount;
     private String status; // UPLOADING, CLASSIFYING, EXTRACTING, COMPLETED, FAILED
 }
-

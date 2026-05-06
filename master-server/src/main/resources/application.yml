@@ -60,6 +60,84 @@ game-master:
   chat:
     default-language: catalan
     default-model: gpt-4.1-mini
+  routing:
+    enabled: true
+    state-verification-enabled: false
+    operations:
+      intent-classifier:
+        preferred-model: gpt-4.1-nano
+        fallback-model: gpt-4.1-mini
+        temperature: 0.0
+        expected-format: json
+        max-tokens: 256
+        latency-budget-ms: 2000
+      roll-decision:
+        preferred-model: gpt-4.1-nano
+        fallback-model: gpt-4.1-mini
+        temperature: 0.0
+        expected-format: json
+        max-tokens: 512
+        latency-budget-ms: 3000
+      manual-answer:
+        preferred-model: gpt-4.1-mini
+        fallback-model: gpt-4.1
+        temperature: 0.3
+        expected-format: text
+        max-tokens: 1024
+        latency-budget-ms: 8000
+      director-stateful:
+        preferred-model: gpt-4.1-mini
+        fallback-model: gpt-4.1
+        temperature: 0.7
+        expected-format: json
+        max-tokens: 2048
+        latency-budget-ms: 15000
+      state-verifier:
+        preferred-model: gpt-4.1-mini
+        fallback-model: gpt-4.1
+        temperature: 0.0
+        expected-format: json
+        max-tokens: 512
+        latency-budget-ms: 5000
+
+whisper:
+  url: http://localhost:9300
+  model: large-v3
+  language: ca
+
+piper-tts:
+  host: localhost
+  port: 10200
+  default-voice: ca_ES-upc_pau-x_low
+  narrator-voice: ca_ES-upc_pau-x_low
+  male-voices:
+    - ca_ES-upc_pau-x_low
+    - es_ES-davefx-medium
+    - es_ES-carlfm-x_low
+    - es_ES-mls_10246-low
+    - es_ES-mls_9972-low
+    - es_ES-sharvard-medium
+  female-voices:
+    - ca_ES-upc_ona-medium
+    - ca_ES-upc_ona-x_low
+    - es_AR-daniela-high
+  voices:
+    narrator: ca_ES-upc_pau-x_low
+    npc_male_deep: es_ES-davefx-medium
+    npc_female: ca_ES-upc_ona-medium
+
+adventure:
+  intent-confirmation-threshold: 0.7
+  max-tension-level: 10
+
+audio:
+  store:
+    # Directory where synthesized WAV clips are stored temporarily
+    dir: ${java.io.tmpdir}/ai-gm-audio
+    # URL prefix returned to clients (relative; must match AudioController mapping)
+    base-url: /audio
+    # Minutes before a stored audio file is eligible for cleanup
+    ttl-minutes: 60
 
 
 logging:

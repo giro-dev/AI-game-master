@@ -8,6 +8,8 @@
 import { FieldTreeBuilder } from '../utils/field-tree-builder.js';
 import { CharacterDataSanitizer } from '../utils/character-data-sanitizer.js';
 import { CharacterGenerationService } from '../services/character-generation-service.js';
+import { AudioCaptureService } from '../services/audio-capture-service.js';
+import { AudioPlaybackService } from '../services/audio-playback-service.js';
 import type { SystemSkill } from '../skills/system-skill.js';
 import type {
     FieldDefinition,
@@ -15,7 +17,17 @@ import type {
     ValidationError,
     ChatEntry,
     BookInfo,
-    VTTAction
+    VTTAction,
+    AdventureSummary,
+    AdventureSavedSessionSummary,
+    AdventureNpcInfo,
+    AdventureSceneInfo,
+    AdventureRollInfo,
+    AdventureStartResponse,
+    NpcDialoguePayload,
+    IntentConfirmationPayload,
+    DirectorNarrationPayload,
+    AdventureStateUpdatePayload
 } from '../types/index.js';
 
 const API = 'http://localhost:8080';
@@ -36,6 +48,30 @@ export class AIGameMasterPanel extends Application {
 
     // ── Library tab state ──
     private books: BookInfo[] = [];
+
+    // ── Adventure tab state ──
+    private adventures: AdventureSummary[] = [];
+    private adventureSavedSessions: AdventureSavedSessionSummary[] = [];
+    private selectedAdventureId: string | null = null;
+    private adventureSessionId: string | null = null;
+    private adventureSessionName: string | null = null;
+    private adventureSessionParticipants: string[] = [];
+    private adventureSessionSummary: string | null = null;
+    private adventureScene: AdventureSceneInfo | null = null;
+    private discoveredClues: string[] = [];
+    private metNpcs: string[] = [];
+    private tensionLevel: number = 0;
+    private adventureNpcs: AdventureNpcInfo[] = [];
+    private adventureLog: string[] = [];
+    private lastAdventureRoll: AdventureRollInfo | null = null;
+    private processedAdventureRollMessageIds: Set<string> = new Set();
+    private speakingNpc: NpcDialoguePayload | null = null;
+    private isRecording: boolean = false;
+    private isProcessing: boolean = false;
+    private _audioCapture: AudioCaptureService | null = null;
+    private _audioPlayback: AudioPlaybackService | null = null;
+    private _adventureHandlersRegistered: boolean = false;
+    private _generationReferenceCharacter: any | null = null;
 
     // ── Services ──
     private readonly _charService: CharacterGenerationService;
@@ -78,6 +114,8 @@ export class AIGameMasterPanel extends Application {
         }
 
         await this._refreshBooks();
+        await this._refreshAdventures();
+        await this._refreshAdventureSessions();
 
         const ext = game.aiGM?.blueprintGenerator?.schemaExtractor;
         let actorTypes: string[] = ['character'];
@@ -104,23 +142,55 @@ export class AIGameMasterPanel extends Application {
             console.warn('[AI-GM Panel] Pack enumeration failed:', e);
         }
 
-        // Fetch reference character status
-        let referenceCharacter: any = null;
+        let knowledgePacks: any[] = [];
         try {
-            const refRes = await fetch(`${API}/gm/character/reference/${encodeURIComponent(game.system.id)}/${encodeURIComponent(this.selectedActorType)}`);
-            if (refRes.ok) {
-                const refData = await refRes.json();
-                referenceCharacter = {
-                    label: refData.label,
-                    actorType: refData.actorType,
-                    itemCount: refData.items?.length ?? 0,
-                    capturedAt: refData.capturedAt ? new Date(refData.capturedAt).toLocaleString() : null,
-                };
-            }
-        } catch (_e) { /* server unreachable – that's fine */ }
+            knowledgePacks = game.packs
+                ?.map((p: any) => ({
+                    id: p.collection,
+                    label: p.metadata?.label ?? `${p.metadata?.packageName}.${p.metadata?.name}`,
+                    documentName: p.documentName ?? 'Document',
+                    source: p.metadata?.packageName ?? 'world'
+                }))
+                ?.sort((a: any, b: any) => {
+                    const labelCmp = String(a.label).localeCompare(String(b.label));
+                    if (labelCmp !== 0) return labelCmp;
+                    return String(a.documentName).localeCompare(String(b.documentName));
+                }) ?? [];
+        } catch (e) {
+            console.warn('[AI-GM Panel] Knowledge pack enumeration failed:', e);
+        }
+
+        // Fetch reference character status (skip during active adventure to reduce noise)
+        let referenceCharacter: any = null;
+        if (!this.adventureSessionId) {
+            try {
+                const refRes = await fetch(`${API}/gm/character/reference/${encodeURIComponent(game.system.id)}/${encodeURIComponent(this.selectedActorType)}`);
+                if (refRes.ok) {
+                    const refData = await refRes.json();
+                    referenceCharacter = {
+                        label: refData.label,
+                        actorType: refData.actorType,
+                        itemCount: refData.items?.length ?? 0,
+                        capturedAt: refData.capturedAt ? new Date(refData.capturedAt).toLocaleString() : null,
+                    };
+                }
+            } catch (_e) { /* server unreachable – that's fine */ }
+        }
 
         // Skill registry data
         const skills = game.aiGM?.skillRegistry?.getAllSkills() ?? [];
+        const availableReferenceActors = Array.from(game.actors ?? [])
+            .map((actor: any) => ({
+                id: actor.id,
+                name: actor.name ?? 'Unnamed',
+                type: actor.type ?? 'unknown',
+                itemCount: actor.items?.size ?? 0
+            }))
+            .sort((a, b) => {
+                const nameCmp = String(a.name).localeCompare(String(b.name));
+                if (nameCmp !== 0) return nameCmp;
+                return String(a.type).localeCompare(String(b.type));
+            });
 
         return {
             // Characters tab
@@ -135,7 +205,12 @@ export class AIGameMasterPanel extends Application {
             itemPacks,
 
             // Library tab
-            books: this.books,
+            books: this.books.map((book: any) => ({
+                ...book,
+                displayTitle: book.bookTitle ?? book.title ?? 'Untitled knowledge source',
+                sourceLabel: book.sourceType === 'compendium' ? 'Compendium' : 'PDF'
+            })),
+            knowledgePacks,
 
             // Session tab
             chatHistory: this.chatHistory,
@@ -150,6 +225,7 @@ export class AIGameMasterPanel extends Application {
             wsConnected: game.aiGM?.wsClient?.isConnected() ?? false,
             serverUrl: API,
             referenceCharacter,
+            availableReferenceActors,
 
             // System skills
             skills: skills.map((s: SystemSkill) => ({
@@ -159,7 +235,36 @@ export class AIGameMasterPanel extends Application {
                 systemId: s.systemId,
                 worldId: s.worldId ?? '',
                 enabled: s.enabled !== false
-            }))
+            })),
+
+            // Adventure tab
+            adventures: this.adventures.map(a => ({
+                ...a,
+                selected: a.id === this.selectedAdventureId
+            })),
+            adventureSavedSessions: this.adventureSavedSessions.map(session => ({
+                ...session,
+                participantNamesText: (session.participantNames ?? []).join(', '),
+                updatedAtLabel: this._formatAdventureDate(session.updatedAt),
+                createdAtLabel: this._formatAdventureDate(session.createdAt)
+            })),
+            adventureSelected: !!this.selectedAdventureId,
+            adventureSessionActive: !!this.adventureSessionId,
+            adventureSessionId: this.adventureSessionId,
+            adventureSessionName: this.adventureSessionName,
+            adventureSessionParticipants: this.adventureSessionParticipants,
+            adventureSessionSummary: this.adventureSessionSummary,
+            adventureScene: this.adventureScene,
+            discoveredClues: this.discoveredClues,
+            metNpcs: this.metNpcs,
+            tensionLevel: this.tensionLevel,
+            tensionMax: 10,
+            tensionPct: Math.max(0, Math.min(100, Math.round((this.tensionLevel / 10) * 100))),
+            adventureNpcs: this.adventureNpcs,
+            adventureLog: this.adventureLog,
+            speakingNpc: this.speakingNpc,
+            isRecording: this.isRecording,
+            isProcessing: this.isProcessing
         };
     }
 
@@ -183,6 +288,7 @@ export class AIGameMasterPanel extends Application {
 
         // ── Library tab ──
         html.find('[data-action="upload-book"]').on('click', this._onUploadBook.bind(this));
+        html.find('[data-action="ingest-compendium"]').on('click', this._onIngestCompendium.bind(this));
         html.find('[data-action="delete-book"]').on('click', this._onDeleteBook.bind(this));
 
         // ── Session tab ──
@@ -221,6 +327,7 @@ export class AIGameMasterPanel extends Application {
         html.find('[data-action="relearn-system"]').on('click', this._onRelearnSystem.bind(this));
         html.find('[data-action="reconnect-ws"]').on('click', this._onReconnectWS.bind(this));
         html.find('[data-action="clear-reference"]').on('click', this._onClearReference.bind(this));
+        html.find('[data-action="set-reference-character"]').on('click', this._onSetReferenceCharacter.bind(this));
 
         // ── Skill management ──
         html.find('[data-action="import-skill"]').on('click', this._onImportSkill.bind(this));
@@ -233,6 +340,19 @@ export class AIGameMasterPanel extends Application {
         // Dynamic result-card buttons (delegated)
         html.find('#char-result').on('click', '[data-action="create-character"]', this._onCreateCharacter.bind(this));
         html.find('#char-result').on('click', '[data-action="export-json"]', this._onExportJSON.bind(this));
+
+        // ── Adventure tab ──
+        html.find('#adventure-select').on('change', this._onAdventureSelectChange.bind(this));
+        html.find('[data-action="upload-adventure"]').on('click', this._onUploadAdventure.bind(this));
+        html.find('[data-action="start-adventure"]').on('click', this._onStartAdventure.bind(this));
+        html.find('[data-action="resume-adventure"]').on('click', this._onResumeAdventure.bind(this));
+        html.find('[data-action="toggle-mic"]').on('click', this._onToggleMic.bind(this));
+        html.find('[data-action="end-adventure"]').on('click', this._onEndAdventure.bind(this));
+        html.find('[data-action="send-adventure-text"]').on('click', this._onSendAdventureText.bind(this));
+        html.find('#adventure-text-input').on('keydown', (ev: any) => { if (ev.key === 'Enter') this._onSendAdventureText(ev); });
+        html.find('[data-action="create-adventure-npc"]').on('click', this._onCreateAdventureNpc.bind(this));
+
+        this._registerAdventureWsHandlers();
     }
 
     /* ================================================================== */
@@ -364,12 +484,22 @@ export class AIGameMasterPanel extends Application {
             if (game.aiGM.postProcessor) blueprint = game.aiGM.postProcessor.enhanceBlueprint(blueprint);
 
             const sessionId: string | null = game.aiGM?.wsClient?.getSessionId() ?? null;
+            const storedRefChar = await this._fetchReferenceCharacter();
+            const referenceCharacter = storedRefChar ?? this._buildImplicitReferenceCharacter();
+            this._generationReferenceCharacter = referenceCharacter;
+
+            if (referenceCharacter) {
+                console.log(`[AI-GM] Using ${storedRefChar ? 'stored' : 'implicit'} reference character "${referenceCharacter.label}"`);
+            }
+
             const request = this._charService.buildRequest({
                 prompt,
                 actorType: this.selectedActorType,
                 blueprint,
                 language,
-                sessionId
+                sessionId,
+                worldId: game.world?.id ?? null,
+                referenceCharacter
             });
             const charData = await this._charService.generateCharacter(request);
 
@@ -461,7 +591,7 @@ export class AIGameMasterPanel extends Application {
             }
 
             // Fetch reference character (if stored) for structural guidance
-            const refChar = await this._fetchReferenceCharacter();
+            const refChar = await this._fetchReferenceCharacter() ?? this._generationReferenceCharacter;
             if (refChar) {
                 console.log(`[AI-GM] Using reference character "${refChar.label}" for structural guidance`);
             }
@@ -544,6 +674,7 @@ export class AIGameMasterPanel extends Application {
             ui.notifications.info(`Created: ${minimalActor.name}`);
             minimalActor.sheet.render(true);
             this.characterData = null;
+            this._generationReferenceCharacter = null;
             this.render(false);
         } catch (e: any) {
             console.error('[AI-GM] Create character failed:', e);
@@ -944,6 +1075,50 @@ export class AIGameMasterPanel extends Application {
         }
     }
 
+    private async _onIngestCompendium(_ev: any): Promise<void> {
+        const html = this.element;
+        const packId: string = html.find('#gm-knowledge-pack').val();
+        if (!packId) return ui.notifications.warn('Select a compendium first.');
+
+        const pack = game.packs?.get(packId);
+        if (!pack) return ui.notifications.error('Compendium not found.');
+
+        const sessionId: string = game.aiGM?.wsClient?.getSessionId() ?? `compendium-${Date.now()}`;
+        this._showProgress(html, 'ingest', 'Reading compendium…', 0);
+        this._subscribeIngestionProgress(html, sessionId);
+
+        try {
+            const documents = await pack.getDocuments();
+            const entries = documents
+                .map((doc: any) => this._serializeCompendiumDocument(doc))
+                .filter((entry: any) => entry?.text);
+
+            if (!entries.length) {
+                this._hideProgress(html, 'ingest');
+                return ui.notifications.warn('This compendium has no usable entries to ingest.');
+            }
+
+            const res = await fetch(`${API}/api/books/compendium`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    worldId: game.world.id,
+                    foundrySystem: game.system.id,
+                    packId: pack.collection,
+                    packLabel: pack.metadata?.label ?? pack.title ?? pack.collection,
+                    documentType: pack.documentName ?? 'Document',
+                    sessionId,
+                    entries
+                })
+            });
+            if (!res.ok) throw new Error(`Server ${res.status}`);
+            ui.notifications.info(`Compendium ingestion started for "${pack.metadata?.label ?? pack.collection}".`);
+        } catch (e: any) {
+            ui.notifications.error(`Compendium ingestion failed: ${e.message}`);
+            this._hideProgress(html, 'ingest');
+        }
+    }
+
     private _subscribeIngestionProgress(html: any, _sessionId: string): void {
         const ws = game.aiGM?.wsClient;
         if (!ws) return;
@@ -974,6 +1149,74 @@ export class AIGameMasterPanel extends Application {
             const res = await fetch(`${API}/api/books/${worldId}`);
             this.books = res.ok ? await res.json() : [];
         } catch { this.books = []; }
+    }
+
+    private _serializeCompendiumDocument(doc: any): any | null {
+        if (!doc) return null;
+
+        const raw = typeof doc.toObject === 'function' ? doc.toObject() : doc;
+        const type = raw.type ?? doc.documentName ?? doc.type ?? 'Document';
+        const name = raw.name ?? doc.name ?? 'Unnamed';
+        const documentName = doc.documentName ?? doc.constructor?.name ?? 'Document';
+        const sections: string[] = [
+            `Compendium entry: ${name}`,
+            `Document class: ${documentName}`,
+            `Type: ${type}`
+        ];
+
+        if (raw.system && Object.keys(raw.system).length) {
+            sections.push(`System data:\n${JSON.stringify(raw.system, null, 2)}`);
+        }
+
+        if (Array.isArray(raw.items) && raw.items.length) {
+            const itemSummary = raw.items.map((item: any) => ({
+                name: item.name,
+                type: item.type,
+                system: item.system ?? {}
+            }));
+            sections.push(`Embedded items:\n${JSON.stringify(itemSummary, null, 2)}`);
+        }
+
+        if (Array.isArray(raw.pages) && raw.pages.length) {
+            const pageContent = raw.pages
+                .map((page: any) => {
+                    const text = page.text?.content ?? page.src ?? page.name ?? '';
+                    return text ? `Page: ${page.name ?? 'Unnamed'}\n${text}` : null;
+                })
+                .filter(Boolean)
+                .join('\n\n');
+            if (pageContent) sections.push(pageContent);
+        }
+
+        if (Array.isArray(raw.results) && raw.results.length) {
+            const results = raw.results.map((result: any) => result.text ?? result.documentCollection ?? result.documentId).filter(Boolean);
+            if (results.length) sections.push(`Table results:\n- ${results.join('\n- ')}`);
+        }
+
+        const description = raw.system?.description?.value
+            ?? raw.system?.description
+            ?? raw.description
+            ?? raw.content
+            ?? raw.biography
+            ?? '';
+        if (description) {
+            const stripped = String(description).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (stripped) sections.push(`Description:\n${stripped}`);
+        }
+
+        if (sections.length <= 3) {
+            sections.push(`Raw data:\n${JSON.stringify(raw, null, 2)}`);
+        }
+
+        return {
+            id: raw._id ?? doc.id ?? name,
+            name,
+            type,
+            text: sections.join('\n\n'),
+            metadata: {
+                document_name: documentName
+            }
+        };
     }
 
     /* ================================================================== */
@@ -1164,6 +1407,52 @@ export class AIGameMasterPanel extends Application {
         }
     }
 
+    private async _onSetReferenceCharacter(): Promise<void> {
+        const actorId = String(this.element.find('#ai-gm-reference-actor').val() ?? '');
+        if (!actorId) {
+            ui.notifications.warn('Selecciona un actor primer.');
+            return;
+        }
+
+        const actor = game.actors?.get(actorId);
+        if (!actor) {
+            ui.notifications.error('No s’ha trobat l’actor seleccionat.');
+            return;
+        }
+
+        await this._storeReferenceCharacter(actor);
+        this.render(false);
+    }
+
+    private async _storeReferenceCharacter(actor: any): Promise<void> {
+        try {
+            ui.notifications?.info(`Capturant "${actor.name}" com a reference character…`);
+
+            const payload = {
+                systemId: game.system.id,
+                actorType: actor.type,
+                label: actor.name,
+                actorData: actor.toObject(),
+                items: actor.items.map((item: any) => item.toObject())
+            };
+
+            const res = await fetch(`${API}/gm/character/reference`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) throw new Error(`Server ${res.status}`);
+
+            ui.notifications?.info(
+                `"${actor.name}" desat com a referència per ${actor.type} (${game.system.id}).`
+            );
+        } catch (e: any) {
+            console.error('[AI-GM] Reference character capture failed:', e);
+            ui.notifications?.error(`No s'ha pogut desar la referència: ${e.message}`);
+        }
+    }
+
     /**
      * Fetch the reference character for the current system + actor type.
      * Returns null if none is stored.
@@ -1182,6 +1471,10 @@ export class AIGameMasterPanel extends Application {
         try {
             await game.aiGM.wsClient.connect();
             ui.notifications.info('WebSocket reconnected.');
+            // Re-subscribe to the active adventure queue after reconnection.
+            if (this.adventureSessionId) {
+                game.aiGM.wsClient.subscribeToAdventure(this.adventureSessionId);
+            }
             this.render(false);
         } catch (e: any) {
             ui.notifications.error(`Reconnect failed: ${e.message}`);
@@ -1191,6 +1484,13 @@ export class AIGameMasterPanel extends Application {
     /* ================================================================== */
     /*  Shared helpers                                                     */
     /* ================================================================== */
+
+    /** Resolves a server-relative URL (e.g. /audio/x.wav) to an absolute URL. */
+    private _resolveAudioUrl(url: string | undefined): string | undefined {
+        if (!url) return undefined;
+        if (url.startsWith('http://') || url.startsWith('https://')) return url;
+        return `${API}${url}`;
+    }
 
     private _showProgress(html: any, prefix: string, message: string, percent: number): void {
         const container = html.find(`#${prefix}-progress`);
@@ -1245,7 +1545,8 @@ export class AIGameMasterPanel extends Application {
                 hp: t.actor?.system?.attributes?.hp ? { value: t.actor.system.attributes.hp.value, max: t.actor.system.attributes.hp.max } : null,
                 disposition: t.document?.disposition
             })) : [],
-            combat: game.combat ? { round: game.combat.round, turn: game.combat.turn, currentCombatantId: game.combat.combatant?.tokenId } : null
+            combat: game.combat ? { round: game.combat.round, turn: game.combat.turn, currentCombatantId: game.combat.combatant?.tokenId } : null,
+            lastRoll: this.lastAdventureRoll
         };
     }
 
@@ -1254,6 +1555,225 @@ export class AIGameMasterPanel extends Application {
         const tmp = document.createElement('DIV');
         tmp.innerHTML = html;
         return tmp.textContent || tmp.innerText || '';
+    }
+
+    public async handleAdventureChatMessage(message: any): Promise<void> {
+        if (!this.adventureSessionId || !message) return;
+
+        const rollInfo = this._extractAdventureRollInfo(message);
+        if (!rollInfo) return;
+        if (rollInfo.messageId && this.processedAdventureRollMessageIds.has(rollInfo.messageId)) return;
+        if (rollInfo.messageId) this.processedAdventureRollMessageIds.add(rollInfo.messageId);
+
+        this.lastAdventureRoll = rollInfo;
+
+        const summary = this._formatAdventureRollSummary(rollInfo);
+        this.adventureLog.push(`🎲 ${summary}`);
+        this._rebuildAdventureSessionSummary();
+
+        const ws = game.aiGM?.wsClient;
+        if (!ws || !this.adventureSessionId) {
+            this.render(false);
+            return;
+        }
+
+        const context = await this._promptAdventureRollContext(rollInfo);
+        if (context === null) {
+            this.adventureLog.push('⏸️ Interpretació de la tirada ajornada.');
+            this._rebuildAdventureSessionSummary();
+            this.render(false);
+            return;
+        }
+
+        const contextInstruction = context.trim()
+            ? ` Context addicional del jugador: ${context.trim()}.`
+            : '';
+
+        ws.sendTranscription({
+            transcription: `[RESULTAT DE TIRADA] ${summary}.${contextInstruction} Resol la situació immediata segons el resultat de la tirada i les regles aplicables; no demanis una nova tirada si aquesta ja resol l'acció.`,
+            adventureSessionId: this.adventureSessionId,
+            worldId: game.world?.id ?? undefined,
+            foundrySystem: game.system?.id ?? undefined,
+            playerName: rollInfo.actorName ?? rollInfo.speakerAlias ?? game.user?.name ?? undefined,
+            worldState: this._collectWorldState()
+        });
+        this.isProcessing = true;
+        this.render(false);
+    }
+
+    private _extractAdventureRollInfo(message: any): AdventureRollInfo | null {
+        const roll = Array.isArray(message?.rolls) && message.rolls.length > 0 ? message.rolls[0] : null;
+        const isRoll = !!roll || !!message?.isRoll;
+        if (!isRoll) return null;
+
+        const actor = message?.actor ?? game.actors?.get?.(message?.speaker?.actor);
+        const flavor = this._stripHtml(message?.flavor ?? '');
+        const content = this._stripHtml(message?.content ?? '');
+        const outcome = this._inferRollOutcome(message, content, flavor);
+        const target = this._inferRollTarget(message, content, flavor);
+        const total = typeof roll?.total === 'number' ? roll.total : null;
+        const success = outcome === 'success' || outcome === 'critical-success'
+            ? true
+            : outcome === 'failure' || outcome === 'critical-failure'
+                ? false
+                : null;
+        const margin = target != null && total != null ? total - target : null;
+
+        return {
+            messageId: message?.id ?? undefined,
+            actorId: actor?.id ?? message?.speaker?.actor ?? undefined,
+            actorName: actor?.name ?? undefined,
+            speakerAlias: message?.speaker?.alias ?? undefined,
+            tokenId: message?.speaker?.token ?? undefined,
+            flavor: flavor || undefined,
+            formula: roll?.formula ?? undefined,
+            total: total ?? undefined,
+            target,
+            margin,
+            outcome,
+            success,
+            content: content || undefined,
+            dice: Array.isArray(roll?.dice)
+                ? roll.dice.map((die: any) => ({
+                    faces: die?.faces,
+                    results: Array.isArray(die?.results)
+                        ? die.results.map((result: any) => result?.result).filter((value: any) => typeof value === 'number')
+                        : []
+                }))
+                : [],
+            rolledAt: Date.now()
+        };
+    }
+
+    private _inferRollOutcome(message: any, content: string, flavor: string): string | null {
+        const candidates = [
+            message?.flags?.dnd5e?.roll?.outcome,
+            message?.flags?.system?.roll?.outcome,
+            message?.flags?.coc7?.result?.outcome,
+            message?.flags?.coc7?.check?.successLevel,
+            content,
+            flavor
+        ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+        for (const raw of candidates) {
+            const text = raw.toLowerCase();
+            if (/(critical success|èxit crític|exito crítico|extreme success|hard success)/.test(text)) return 'critical-success';
+            if (/(critical failure|fumble|pifia|fracàs crític|fracaso crítico)/.test(text)) return 'critical-failure';
+            if (/(success|èxit|exito|passed|supera)/.test(text)) return 'success';
+            if (/(failure|failed|fracàs|fracaso|falla|miss)/.test(text)) return 'failure';
+        }
+        return null;
+    }
+
+    private _buildImplicitReferenceCharacter(): any | null {
+        const actors = (Array.from(game.actors ?? []) as any[])
+            .filter((actor: any) => actor?.type === this.selectedActorType)
+            .sort((a: any, b: any) => {
+                const itemDiff = (b?.items?.size ?? 0) - (a?.items?.size ?? 0);
+                if (itemDiff !== 0) return itemDiff;
+                const fieldDiff = Object.keys(b?.system ?? {}).length - Object.keys(a?.system ?? {}).length;
+                if (fieldDiff !== 0) return fieldDiff;
+                return String(a?.name ?? '').localeCompare(String(b?.name ?? ''));
+            });
+
+        const candidate: any = actors.find((actor: any) => (actor?.items?.size ?? 0) > 0 || Object.keys(actor?.system ?? {}).length > 10);
+        if (!candidate) return null;
+
+        try {
+            return {
+                systemId: game.system.id,
+                actorType: candidate.type,
+                label: candidate.name,
+                actorData: candidate.toObject(),
+                items: candidate.items.map((item: any) => item.toObject()),
+                capturedAt: Date.now()
+            };
+        } catch (e) {
+            console.warn('[AI-GM] Failed to build implicit reference character:', e);
+            return null;
+        }
+    }
+
+    private _inferRollTarget(message: any, content: string, flavor: string): number | null {
+        const explicitCandidates = [
+            message?.flags?.dnd5e?.roll?.targetValue,
+            message?.flags?.system?.roll?.targetValue,
+            message?.flags?.coc7?.check?.difficulty,
+            message?.flags?.coc7?.check?.rawValue
+        ];
+        for (const candidate of explicitCandidates) {
+            if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+        }
+
+        for (const text of [content, flavor]) {
+            const match = text.match(/(?:vs\.?|contra|target|dificultat|difficulty|dc)\s*(\d{1,3})/i);
+            if (match) return Number(match[1]);
+        }
+        return null;
+    }
+
+    private _formatAdventureRollSummary(roll: AdventureRollInfo): string {
+        const who = roll.actorName ?? roll.speakerAlias ?? 'Algú';
+        const what = roll.flavor || roll.formula || 'tirada';
+        const total = typeof roll.total === 'number' ? ` = ${roll.total}` : '';
+        const target = typeof roll.target === 'number' ? ` vs ${roll.target}` : '';
+        const outcome = roll.outcome
+            ? ({
+                'critical-success': 'èxit crític',
+                'critical-failure': 'fracàs crític',
+                success: 'èxit',
+                failure: 'fracàs'
+            } as Record<string, string>)[roll.outcome] ?? roll.outcome
+            : (typeof roll.success === 'boolean' ? (roll.success ? 'èxit' : 'fracàs') : null);
+        return `${who} ha fet ${what}${total}${target}${outcome ? ` (${outcome})` : ''}`;
+    }
+
+    private _promptAdventureRollContext(roll: AdventureRollInfo): Promise<string | null> {
+        const summary = this._formatAdventureRollSummary(roll);
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (value: string | null): void => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+            };
+
+            const dialog = new Dialog({
+                title: 'Interpretar tirada',
+                content: `
+                    <p>${this._escapeHtml(summary)}</p>
+                    <p class="hint">Vols afegir més context perquè el Director interpreti millor aquesta tirada?</p>
+                    <div class="form-group">
+                      <label for="ai-gm-roll-context">Context opcional</label>
+                      <textarea id="ai-gm-roll-context" rows="4" placeholder="Ex.: què volia aconseguir el jugador, contra què feia la tirada, conseqüències esperades..."></textarea>
+                    </div>
+                `,
+                buttons: {
+                    send: {
+                        icon: '<i class="fas fa-paper-plane"></i>',
+                        label: 'Enviar sense context',
+                        callback: () => finish('')
+                    },
+                    sendWithContext: {
+                        icon: '<i class="fas fa-comment-dots"></i>',
+                        label: 'Afegir context i enviar',
+                        callback: (html: any) => {
+                            const text = String(html.find('#ai-gm-roll-context').val() ?? '').trim();
+                            finish(text);
+                        }
+                    },
+                    ignore: {
+                        icon: '<i class="fas fa-pause"></i>',
+                        label: 'Ara no',
+                        callback: () => finish(null)
+                    }
+                },
+                default: 'sendWithContext',
+                close: () => finish(null)
+            });
+            dialog.render(true);
+        });
     }
 
     private async _executeActions(actions: VTTAction[]): Promise<void> {
@@ -1462,5 +1982,551 @@ export class AIGameMasterPanel extends Application {
         d.render(true);
     }
 
-}
+    /* ================================================================== */
+    /*  ADVENTURE TAB                                                      */
+    /* ================================================================== */
 
+    private async _refreshAdventures(): Promise<void> {
+        const worldId = game.world?.id;
+        if (!worldId) {
+            this.adventures = [];
+            return;
+        }
+        try {
+            const res = await fetch(`${API}/adventure/${encodeURIComponent(worldId)}`);
+            if (res.ok) {
+                const list = await res.json();
+                this.adventures = (list || []) as AdventureSummary[];
+                if (this.selectedAdventureId && !this.adventures.find(a => a.id === this.selectedAdventureId)) {
+                    this.selectedAdventureId = null;
+                }
+            } else {
+                this.adventures = [];
+            }
+        } catch (_e) {
+            // Server unreachable; leave list empty.
+            this.adventures = [];
+        }
+    }
+
+    private async _refreshAdventureSessions(): Promise<void> {
+        const worldId = game.world?.id;
+        if (!worldId || !this.selectedAdventureId) {
+            this.adventureSavedSessions = [];
+            return;
+        }
+        try {
+            const res = await fetch(
+                `${API}/adventure/${encodeURIComponent(this.selectedAdventureId)}/sessions?worldId=${encodeURIComponent(worldId)}`
+            );
+            if (res.ok) {
+                this.adventureSavedSessions = (await res.json() ?? []) as AdventureSavedSessionSummary[];
+            } else {
+                this.adventureSavedSessions = [];
+            }
+        } catch (_e) {
+            this.adventureSavedSessions = [];
+        }
+    }
+
+    private _onAdventureSelectChange(ev: any): void {
+        this.selectedAdventureId = ev.target?.value || null;
+        this.render(false);
+    }
+
+    private async _onUploadAdventure(_ev: any): Promise<void> {
+        const worldId = game.world?.id;
+        if (!worldId) {
+            ui.notifications.warn('No active world');
+            return;
+        }
+
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/pdf';
+        input.style.display = 'none';
+        document.body.appendChild(input);
+
+        const cleanup = () => input.remove();
+
+        input.onchange = async () => {
+            const file = input.files?.[0];
+            cleanup();
+            if (!file) return;
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('foundrySystem', game.system?.id ?? '');
+            fd.append('worldId', worldId);
+            fd.append('bookTitle', file.name.replace(/\.pdf$/i, ''));
+
+            ui.notifications.info(`Ingerint aventura "${file.name}"...`);
+            try {
+                const res = await fetch(`${API}/adventure/upload`, { method: 'POST', body: fd });
+                if (!res.ok) {
+                    const errText = await res.text();
+                    ui.notifications.error(`Error ingerint aventura: ${errText}`);
+                    return;
+                }
+                const adventure = await res.json() as AdventureSummary;
+                ui.notifications.info(`Aventura "${adventure.title}" carregada`);
+                await this._refreshAdventures();
+                this.selectedAdventureId = adventure.id;
+                this.render(false);
+            } catch (e: any) {
+                ui.notifications.error(`Error pujant aventura: ${e?.message ?? e}`);
+            }
+        };
+        // Handle cancel (user closes file dialog without selecting)
+        input.addEventListener('cancel', cleanup);
+        input.click();
+    }
+
+    private async _onStartAdventure(_ev: any): Promise<void> {
+        if (!this.selectedAdventureId) {
+            ui.notifications.warn('Selecciona una aventura primer');
+            return;
+        }
+        try {
+            const worldId = game.world?.id;
+            const startUrl = `${API}/adventure/${encodeURIComponent(this.selectedAdventureId)}/start`
+                + (worldId ? `?worldId=${encodeURIComponent(worldId)}` : '');
+            const res = await fetch(startUrl, { method: 'POST' });
+            if (!res.ok) {
+                ui.notifications.error(`No s'ha pogut iniciar la sessió: ${await res.text()}`);
+                return;
+            }
+            const data = await res.json() as AdventureStartResponse;
+            this._loadAdventureSessionState(data);
+
+            ui.notifications.info('Aventura iniciada!');
+            this.render(false);
+
+            // Send an initial message to the Director to trigger the opening narration
+            setTimeout(() => {
+                game.aiGM?.wsClient?.sendTranscription({
+                    transcription: '[Inici de l\'aventura — narra la introducció de l\'escena actual]',
+                    adventureSessionId: data.sessionId,
+                    worldId: worldId ?? undefined,
+                    foundrySystem: game.system?.id ?? undefined,
+                    playerName: game.user?.name ?? undefined
+                });
+                this.isProcessing = true;
+                this.render(false);
+            }, 500);
+        } catch (e: any) {
+            ui.notifications.error(`Error iniciant l'aventura: ${e?.message ?? e}`);
+        }
+    }
+
+    private async _onResumeAdventure(ev: any): Promise<void> {
+        const sessionId = ev.currentTarget?.dataset?.sessionId;
+        if (!sessionId) return;
+        try {
+            const res = await fetch(`${API}/adventure/session/${encodeURIComponent(sessionId)}/resume`, { method: 'POST' });
+            if (!res.ok) {
+                ui.notifications.error(`No s'ha pogut reprendre la sessió: ${await res.text()}`);
+                return;
+            }
+            const data = await res.json() as AdventureStartResponse;
+            this._loadAdventureSessionState(data);
+            this.adventureLog = data.sessionSummary
+                ? [`Resum de la sessió: ${data.sessionSummary}`]
+                : ['Sessió represa.'];
+            ui.notifications.info('Sessió represa!');
+            this.render(false);
+        } catch (e: any) {
+            ui.notifications.error(`Error reprenent la sessió: ${e?.message ?? e}`);
+        }
+    }
+
+    private _onEndAdventure(_ev: any): void {
+        this._audioCapture?.cancel();
+        this._audioPlayback?.stop();
+        this._resetAdventureState();
+        this.render(false);
+    }
+
+    private _loadAdventureSessionState(data: AdventureStartResponse): void {
+        this.adventureSessionId = data.sessionId;
+        this.adventureSessionName = data.sessionName ?? null;
+        this.adventureSessionParticipants = Array.isArray(data.participantNames) ? [...data.participantNames] : [];
+        this.adventureSessionSummary = data.sessionSummary ?? null;
+        this.adventureScene = data.currentScene ?? null;
+        this.discoveredClues = Array.isArray(data.discoveredClues) ? [...data.discoveredClues] : [];
+        this.metNpcs = Array.isArray(data.metNpcs) ? [...data.metNpcs] : [];
+        this.tensionLevel = typeof data.tensionLevel === 'number' ? data.tensionLevel : 0;
+        this.speakingNpc = null;
+        this.isRecording = false;
+        this.isProcessing = false;
+
+        const adventureId = data.adventureId ?? this.selectedAdventureId;
+        if (adventureId) this.selectedAdventureId = adventureId;
+
+        const adv = this.adventures.find(a => a.id === adventureId);
+        this.adventureNpcs = (adv?.npcs ?? []) as AdventureNpcInfo[];
+        this.adventureLog = [];
+        this.lastAdventureRoll = null;
+        this.processedAdventureRollMessageIds.clear();
+        this._rebuildAdventureSessionSummary();
+
+        game.aiGM?.wsClient?.subscribeToAdventure(data.sessionId);
+        this._initAdventureAudio();
+    }
+
+    private _resetAdventureState(): void {
+        this.adventureSessionId = null;
+        this.adventureSessionName = null;
+        this.adventureSessionParticipants = [];
+        this.adventureSessionSummary = null;
+        this.adventureScene = null;
+        this.discoveredClues = [];
+        this.metNpcs = [];
+        this.tensionLevel = 0;
+        this.adventureNpcs = [];
+        this.adventureLog = [];
+        this.lastAdventureRoll = null;
+        this.processedAdventureRollMessageIds.clear();
+        this.speakingNpc = null;
+        this.isRecording = false;
+        this.isProcessing = false;
+    }
+
+    private _onSendAdventureText(_ev: any): void {
+        if (!this.adventureSessionId) {
+            ui.notifications.warn('Inicia una sessió d\'aventura primer');
+            return;
+        }
+        const inputEl = document.getElementById('adventure-text-input') as HTMLInputElement | null;
+        const text = inputEl?.value?.trim();
+        if (!text) return;
+        inputEl!.value = '';
+
+        const ws = game.aiGM?.wsClient;
+        if (!ws) { ui.notifications.error('WebSocket no connectat'); return; }
+
+        ws.sendTranscription({
+            transcription: text,
+            adventureSessionId: this.adventureSessionId,
+            worldId: game.world?.id ?? undefined,
+            foundrySystem: game.system?.id ?? undefined,
+            playerName: game.user?.name ?? undefined,
+            worldState: this._collectWorldState()
+        });
+        this.isProcessing = true;
+        this.render(false);
+    }
+
+    private async _onCreateAdventureNpc(ev: any): Promise<void> {
+        const npcId = ev.currentTarget?.dataset?.npcId;
+        const npc = this.adventureNpcs.find(n => n.id === npcId);
+        if (!npc) return;
+
+        // Determine the correct NPC actor type using schema extractor
+        const ext = game.aiGM?.blueprintGenerator?.schemaExtractor;
+        const actorTypes: string[] = ext?.getActorTypes() ?? ['character'];
+        const actorType = actorTypes.includes('npc') ? 'npc' : actorTypes[0];
+
+        // Build descriptive prompt from NPC adventure data
+        const promptParts = [`Crea un NPC anomenat "${npc.name}" per a una aventura de rol.`];
+        if (npc.personality) promptParts.push(`Personalitat: ${npc.personality}`);
+        if (npc.objectives) promptParts.push(`Objectius: ${npc.objectives}`);
+        if (npc.currentDisposition) promptParts.push(`Disposició actual: ${npc.currentDisposition}`);
+        const prompt = promptParts.join('\n');
+
+        ui.notifications.info(`Generant NPC "${npc.name}"…`);
+
+        try {
+            // Generate a full AI blueprint for the NPC actor type
+            let blueprint = game.aiGM.blueprintGenerator.generateAIBlueprint(actorType);
+            if (game.aiGM.postProcessor) blueprint = game.aiGM.postProcessor.enhanceBlueprint(blueprint);
+
+            const sessionId: string | null = game.aiGM?.wsClient?.getSessionId() ?? null;
+            const request = this._charService.buildRequest({ prompt, actorType, blueprint, language: 'ca', sessionId });
+            const charData = await this._charService.generateCharacter(request);
+            const sanitized = CharacterDataSanitizer.sanitize(charData);
+            if (!sanitized) throw new Error('Character generation returned empty data');
+
+            const actorName = sanitized.actor?.name || npc.name;
+            const aiSystemData = sanitized.actor?.system ?? {};
+
+            // Phase 1: Create minimal actor (lets system add defaults)
+            const minimalActor = await (Actor as any).create({
+                name: actorName,
+                type: actorType,
+                img: sanitized.actor?.img || 'icons/svg/mystery-man.svg'
+            });
+            if (!minimalActor) throw new Error('Actor creation failed');
+
+            // Phase 2: Update with AI-generated system data
+            if (Object.keys(aiSystemData).length > 0) {
+                const existingSystem = (minimalActor as any).system ?? {};
+                const flatUpdate: Record<string, any> = {};
+                this._flattenStructureAware(aiSystemData, 'system', flatUpdate, existingSystem);
+                await minimalActor.update(flatUpdate);
+            }
+
+            // Phase 3: Sync AI skill values to embedded items
+            if (minimalActor.items.size > 0) {
+                await this._syncAISkillsToItems(minimalActor, aiSystemData, null);
+            }
+
+            // Phase 4: Add AI-generated equipment/items
+            if (sanitized.items?.length) {
+                await this._upsertGeneratedItems(minimalActor, sanitized.items);
+            }
+
+            ui.notifications.info(`NPC "${npc.name}" creat com a actor!`);
+            minimalActor.sheet.render(true);
+        } catch (e: any) {
+            console.error('[AI-GM] Adventure NPC creation failed:', e);
+            ui.notifications.error(`Error creant NPC: ${e?.message ?? e}`);
+        }
+    }
+
+    private async _onToggleMic(_ev: any): Promise<void> {
+        if (!this.adventureSessionId) {
+            ui.notifications.warn('Inicia una sessió d\'aventura primer');
+            return;
+        }
+        if (!this._audioCapture) this._initAdventureAudio();
+        try {
+            await this._audioCapture?.toggle();
+        } catch (e: any) {
+            ui.notifications.error(`Microphone error: ${e?.message ?? e}`);
+        }
+    }
+
+    private _initAdventureAudio(): void {
+        if (!this.adventureSessionId) return;
+        const ws = game.aiGM?.wsClient;
+        if (!ws) return;
+
+        this._audioCapture = new AudioCaptureService(ws, {
+            adventureSessionId: this.adventureSessionId,
+            worldId: game.world?.id ?? undefined,
+            foundrySystem: game.system?.id ?? undefined,
+            playerName: game.user?.name ?? undefined,
+            worldState: () => this._collectWorldState(),
+            onStateChange: (recording) => {
+                this.isRecording = recording;
+                this.render(false);
+            },
+            onSubmitting: () => {
+                this.isProcessing = true;
+                this.render(false);
+            }
+        });
+
+        this._audioPlayback = new AudioPlaybackService({
+            onSpeakingChange: (npc: NpcDialoguePayload | null) => {
+                this.speakingNpc = npc;
+                this.render(false);
+            }
+        });
+    }
+
+    private _registerAdventureWsHandlers(): void {
+        if (this._adventureHandlersRegistered) return;
+        const ws = game.aiGM?.wsClient;
+        if (!ws) return;
+
+        // Re-subscribe to the adventure queue after any reconnection.
+        ws.on('onConnected', (_data: any) => {
+            if (this.adventureSessionId) {
+                ws.subscribeToAdventure(this.adventureSessionId);
+            }
+        });
+
+        ws.on('onTranscriptionReceived', (data: any) => {
+            this.isProcessing = false;
+            if (data?.transcription) {
+                this.adventureLog.push(`Tu: ${data.transcription}`);
+                this._rememberAdventureParticipant(game.user?.name ?? null);
+                this._rebuildAdventureSessionSummary();
+                this.render(false);
+            }
+        });
+
+        ws.on('onDirectorNarration', (data: DirectorNarrationPayload) => {
+            this.isProcessing = false;
+            if (data?.narration) {
+                this.adventureLog.push(`Director: ${data.narration}`);
+                // Post to Foundry main chat
+                try {
+                    (ChatMessage as any).create({
+                        content: `<div class="ai-gm-narration" style="font-style:italic;">${data.narration}</div>`,
+                        speaker: { alias: 'Director' }
+                    });
+                } catch (_e) { /* best effort */ }
+                // Play narration audio if available (URL preferred, base64 as fallback)
+                const narrationAudioSrc = data.narrationAudioUrl || data.narrationAudioBase64;
+                if (narrationAudioSrc && this._audioPlayback) {
+                    this._audioPlayback.enqueue({
+                        npcId: 'director',
+                        npcName: 'Director',
+                        text: data.narration,
+                        audioUrl: this._resolveAudioUrl(data.narrationAudioUrl),
+                        audioBase64: data.narrationAudioBase64
+                    });
+                }
+                this._rebuildAdventureSessionSummary();
+                this.render(false);
+            }
+            // Apply VTT actions if any
+            if (Array.isArray(data?.actions) && data.actions.length) {
+                this._applyVttActions(data.actions);
+            }
+        });
+
+        ws.on('onDirectorAudioReady', (data: DirectorNarrationPayload) => {
+            if (data?.narrationAudioUrl && this._audioPlayback) {
+                this._audioPlayback.enqueue({
+                    npcId: 'director',
+                    npcName: 'Director',
+                    text: data.narration,
+                    audioUrl: this._resolveAudioUrl(data.narrationAudioUrl)
+                });
+            }
+        });
+
+        ws.on('onNpcDialogueAudio', (data: NpcDialoguePayload) => {
+            const npcLabel = data?.npcName ?? data?.npcId ?? 'NPC';
+            if (data?.text) {
+                this.adventureLog.push(`${npcLabel}: ${data.text}`);
+                // Post to Foundry main chat
+                try {
+                    (ChatMessage as any).create({
+                        content: `<strong>${this._escapeHtml(npcLabel)}</strong>: ${this._escapeHtml(data.text)}`,
+                        speaker: { alias: npcLabel }
+                    });
+                } catch (_e) { /* best effort */ }
+            }
+            this._rebuildAdventureSessionSummary();
+            if (data?.audioUrl || data?.audioBase64) {
+                this._audioPlayback?.enqueue({ ...data, audioUrl: this._resolveAudioUrl(data.audioUrl) });
+            } else {
+                this.render(false);
+            }
+        });
+
+        ws.on('onNpcAudioReady', (data: NpcDialoguePayload) => {
+            if (data?.audioUrl || data?.audioBase64) {
+                this._audioPlayback?.enqueue({ ...data, audioUrl: this._resolveAudioUrl(data.audioUrl) });
+            }
+        });
+
+        ws.on('onIntentConfirmationRequest', (data: IntentConfirmationPayload) => {
+            this.isProcessing = false;
+            this._showIntentConfirmationDialog(data);
+        });
+
+        ws.on('onSceneTransition', (data: any) => {
+            if (data?.title) this.adventureScene = { title: data.title, readAloudText: data.readAloudText ?? '' };
+            this.adventureLog.push(`— Transició: ${data?.title ?? data?.sceneId ?? '?'} —`);
+            this._rebuildAdventureSessionSummary();
+            this.render(false);
+        });
+
+        ws.on('onAdventureStateUpdate', (data: AdventureStateUpdatePayload) => {
+            if (Array.isArray(data?.discoveredClues)) {
+                for (const c of data.discoveredClues) {
+                    if (!this.discoveredClues.includes(c)) this.discoveredClues.push(c);
+                }
+            }
+            if (data?.npcDispositionChanges) {
+                for (const npcId of Object.keys(data.npcDispositionChanges)) {
+                    if (!this.metNpcs.includes(npcId)) {
+                        const npc = this.adventureNpcs.find(n => n.id === npcId);
+                        this.metNpcs.push(npc?.name ?? npcId);
+                    }
+                }
+            }
+            if (typeof data?.tensionDelta === 'number') {
+                this.tensionLevel = Math.max(0, Math.min(10, this.tensionLevel + data.tensionDelta));
+            }
+            this._rebuildAdventureSessionSummary();
+            this.render(false);
+        });
+
+        this._adventureHandlersRegistered = true;
+    }
+
+    private _rememberAdventureParticipant(playerName: string | null): void {
+        if (!playerName) return;
+        if (!this.adventureSessionParticipants.includes(playerName)) {
+            this.adventureSessionParticipants.push(playerName);
+        }
+    }
+
+    private _rebuildAdventureSessionSummary(): void {
+        const parts: string[] = [];
+        if (this.adventureScene?.title) {
+            parts.push(`Escena actual: ${this.adventureScene.title}.`);
+        }
+        if (this.adventureSessionParticipants.length) {
+            parts.push(`Participants: ${this.adventureSessionParticipants.join(', ')}.`);
+        }
+        if (this.discoveredClues.length) {
+            parts.push(`Pistes descobertes: ${this.discoveredClues.slice(0, 3).join(' · ')}${this.discoveredClues.length > 3 ? '…' : ''}.`);
+        }
+        if (this.metNpcs.length) {
+            parts.push(`NPCs trobats: ${this.metNpcs.slice(0, 3).join(' · ')}${this.metNpcs.length > 3 ? '…' : ''}.`);
+        }
+        const latestStoryBeat = [...this.adventureLog].reverse().find(line => !line.startsWith('Tu:'));
+        if (latestStoryBeat) {
+            parts.push(`Últim desenvolupament: ${latestStoryBeat.slice(0, 220)}${latestStoryBeat.length > 220 ? '…' : ''}.`);
+        }
+        this.adventureSessionSummary = parts.length ? parts.join(' ') : this.adventureSessionSummary;
+    }
+
+    private _formatAdventureDate(value?: string): string {
+        if (!value) return '';
+        try {
+            return new Date(value).toLocaleString();
+        } catch (_e) {
+            return value;
+        }
+    }
+
+    private _applyVttActions(actions: VTTAction[]): void {
+        // Reuse the existing post-processor if available
+        try {
+            game.aiGM?.postProcessor?.applyActions?.(actions);
+        } catch (e) {
+            console.warn('[AI-GM Adventure] Failed to apply VTT actions:', e);
+        }
+        void this._executeActions(actions);
+    }
+
+    private _showIntentConfirmationDialog(data: IntentConfirmationPayload): void {
+        if (!this.adventureSessionId) return;
+        const sessionId = this.adventureSessionId;
+        const ws = game.aiGM?.wsClient;
+        if (!ws) return;
+
+        const d = new Dialog({
+            title: 'Confirmar intenció',
+            content: `<p>${this._escapeHtml(data?.question ?? 'Vols continuar amb aquesta acció?')}</p>`,
+            buttons: {
+                yes: {
+                    icon: '<i class="fas fa-check"></i>',
+                    label: 'Sí',
+                    callback: () => ws.confirmIntent(true, sessionId)
+                },
+                no: {
+                    icon: '<i class="fas fa-times"></i>',
+                    label: 'No',
+                    callback: () => ws.confirmIntent(false, sessionId)
+                },
+                rephrase: {
+                    icon: '<i class="fas fa-comment"></i>',
+                    label: 'Reformular',
+                    callback: () => ws.confirmIntent('rephrase', sessionId)
+                }
+            },
+            default: 'yes'
+        });
+        d.render(true);
+    }
+
+}

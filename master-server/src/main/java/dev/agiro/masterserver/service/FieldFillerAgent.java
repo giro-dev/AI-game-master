@@ -257,8 +257,10 @@ public class FieldFillerAgent {
 
         SystemProfileDto profile = resolveProfile(request.getBlueprint().getSystemId());
 
-        var refOpt = systemProfileService.getReferenceCharacter(
-                request.getBlueprint().getSystemId(), request.getActorType());
+        var refOpt = request.getReferenceCharacter() != null
+                ? java.util.Optional.of(request.getReferenceCharacter())
+                : systemProfileService.getReferenceCharacter(
+                        request.getBlueprint().getSystemId(), request.getActorType());
 
         StringBuilder userPrompt = new StringBuilder();
         userPrompt.append("Character Concept:\n");

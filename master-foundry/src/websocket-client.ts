@@ -40,6 +40,16 @@ export class WebSocketClient {
             onIngestionProgress: [],
             onIngestionCompleted: [],
             onIngestionFailed: [],
+            onTranscriptionReceived: [],
+            onIntentConfirmationRequest: [],
+            onIntentConfirmed: [],
+            onIntentRejected: [],
+            onDirectorNarration: [],
+            onDirectorAudioReady: [],
+            onNpcDialogueAudio: [],
+            onNpcAudioReady: [],
+            onSceneTransition: [],
+            onAdventureStateUpdate: [],
             onNotification: [],
             onError: [],
             onConnected: [],
@@ -72,6 +82,8 @@ export class WebSocketClient {
                 (_frame: any) => {
                     this.connected = true;
                     this.reconnectAttempts = 0;
+                    // Clear stale subscriptions from previous connection.
+                    this.subscriptions.clear();
                     console.log('[WebSocket] Connected:', _frame);
 
                     this._subscribeToTopics();
@@ -280,6 +292,46 @@ export class WebSocketClient {
         console.log('[WebSocket] Message:', message);
 
         switch (message.type) {
+            case 'TRANSCRIPTION_RECEIVED':
+                this._triggerEvent('onTranscriptionReceived', message.payload);
+                break;
+
+            case 'INTENT_CONFIRMATION_REQUEST':
+                this._triggerEvent('onIntentConfirmationRequest', message.payload);
+                break;
+
+            case 'INTENT_CONFIRMED':
+                this._triggerEvent('onIntentConfirmed', message.payload);
+                break;
+
+            case 'INTENT_REJECTED':
+                this._triggerEvent('onIntentRejected', message.payload);
+                break;
+
+            case 'DIRECTOR_NARRATION':
+                this._triggerEvent('onDirectorNarration', message.payload);
+                break;
+
+            case 'DIRECTOR_AUDIO_READY':
+                this._triggerEvent('onDirectorAudioReady', message.payload);
+                break;
+
+            case 'NPC_DIALOGUE_AUDIO':
+                this._triggerEvent('onNpcDialogueAudio', message.payload);
+                break;
+
+            case 'NPC_AUDIO_READY':
+                this._triggerEvent('onNpcAudioReady', message.payload);
+                break;
+
+            case 'SCENE_TRANSITION':
+                this._triggerEvent('onSceneTransition', message.payload);
+                break;
+
+            case 'ADVENTURE_STATE_UPDATE':
+                this._triggerEvent('onAdventureStateUpdate', message.payload);
+                break;
+
             case 'NOTIFICATION':
                 this._triggerEvent('onNotification', message.payload);
                 if (message.payload?.text) {
@@ -408,5 +460,41 @@ export class WebSocketClient {
         };
         return this.send(destination, message);
     }
-}
 
+    subscribeToAdventure(adventureSessionId: string): boolean {
+        if (!adventureSessionId) {
+            return false;
+        }
+        const destination = `/queue/adventure-${adventureSessionId}`;
+        if (this.subscriptions.has(destination)) {
+            return true;
+        }
+        this._subscribe(destination, (message: any) => {
+            this._handleMessage(JSON.parse(message.body));
+        });
+        return true;
+    }
+
+    sendTranscription(payload: any): boolean {
+        return this.send('/app/adventure/transcription', {
+            type: 'GAME_EVENT',
+            payload
+        });
+    }
+
+    confirmIntent(response: boolean | 'rephrase', adventureSessionId: string): boolean {
+        const confirmationResponse = response === true
+            ? 'yes'
+            : response === false
+                ? 'no'
+                : 'rephrase';
+
+        return this.send('/app/adventure/confirm', {
+            type: 'GAME_EVENT',
+            payload: {
+                adventureSessionId,
+                confirmationResponse
+            }
+        });
+    }
+}

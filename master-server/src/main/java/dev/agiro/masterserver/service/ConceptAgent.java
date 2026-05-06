@@ -77,7 +77,9 @@ public class ConceptAgent {
 
         // Inject reference character context if available
         String referenceContext = "";
-        var refOpt = systemProfileService.getReferenceCharacter(systemId, request.getActorType());
+        var refOpt = request.getReferenceCharacter() != null
+                ? java.util.Optional.of(request.getReferenceCharacter())
+                : systemProfileService.getReferenceCharacter(systemId, request.getActorType());
         if (refOpt.isPresent()) {
             referenceContext = promptBuilder.buildReferenceCharacterContext(refOpt.get(), "system");
             log.info("Using reference character '{}' for core concept generation", refOpt.get().getLabel());

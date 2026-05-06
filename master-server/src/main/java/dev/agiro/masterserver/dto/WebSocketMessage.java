@@ -65,6 +65,18 @@ public class WebSocketMessage {
         // Transcription events
         TRANSCRIPTION_COMPLETED,
 
+        // Adventure Director events
+        TRANSCRIPTION_RECEIVED,
+        INTENT_CONFIRMATION_REQUEST,
+        INTENT_CONFIRMED,
+        INTENT_REJECTED,
+        DIRECTOR_NARRATION,
+        DIRECTOR_AUDIO_READY,
+        NPC_DIALOGUE_AUDIO,
+        NPC_AUDIO_READY,
+        SCENE_TRANSITION,
+        ADVENTURE_STATE_UPDATE,
+
         // Generic notifications
         NOTIFICATION,
         ERROR,

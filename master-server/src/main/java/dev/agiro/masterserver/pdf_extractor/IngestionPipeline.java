@@ -2,6 +2,7 @@ package dev.agiro.masterserver.pdf_extractor;
 
 import dev.agiro.masterserver.controller.WebSocketController;
 import dev.agiro.masterserver.dto.BookDto;
+import dev.agiro.masterserver.dto.CompendiumIngestionRequest;
 import dev.agiro.masterserver.dto.IngestionEvent;
 import dev.agiro.masterserver.dto.WebSocketMessage;
 import jakarta.annotation.PostConstruct;
@@ -17,12 +18,12 @@ import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * Multi-stage ingestion pipeline for RPG documents.
@@ -68,17 +69,8 @@ public class IngestionPipeline {
     public void ingestAsync(byte[] pdfBytes, String fileName, String worldId, String foundrySystem,
                             String bookTitle, String sessionId) {
 
-        String bookId = UUID.randomUUID().toString();
-        BookDto book = BookDto.builder()
-                .bookId(bookId)
-                .worldId(worldId)
-                .foundrySystem(foundrySystem)
-                .bookTitle(bookTitle)
-                .fileName(fileName)
-                .uploadDate(Instant.now())
-                .status("UPLOADING")
-                .build();
-        bookRegistry.put(bookId, book);
+        BookDto book = createBookRecord(worldId, foundrySystem, bookTitle, fileName, "pdf", fileName);
+        String bookId = book.getBookId();
 
         sendProgress(sessionId, IngestionEvent.builder()
                 .bookId(bookId).worldId(worldId).status("STARTED").progress(0)
@@ -158,43 +150,7 @@ public class IngestionPipeline {
                     .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
 
             // ── Stage 4: Mark raw chunks & store ────────────────────────
-            book.setStatus("STORING");
-            for (Document doc : classifiedChunks) {
-                doc.getMetadata().putIfAbsent("document_type", "raw_chunk");
-            }
-
-            List<Document> allDocuments = new ArrayList<>(classifiedChunks);
-            allDocuments.addAll(entityDocs);
-
-            sendProgress(sessionId, IngestionEvent.builder()
-                    .bookId(bookId).worldId(worldId).status("STORING").progress(80)
-                    .message("Storing " + allDocuments.size() + " documents in vector store…")
-                    .totalChunks(totalChunks).entitiesExtracted(entityDocs.size())
-                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
-
-            storeWithRateLimit(allDocuments);
-
-            // ── Stage 5: Enrich System Profile with new knowledge ───────
-            try {
-                log.info("[{}] Enriching system profile for {}", bookId, foundrySystem);
-                systemProfileService.enrichFromIngestion(foundrySystem, classifiedChunks, entityDocs);
-            } catch (Exception enrichErr) {
-                log.warn("[{}] System profile enrichment failed (non-blocking): {}", bookId, enrichErr.getMessage());
-            }
-
-            // ── Done ────────────────────────────────────────────────────
-            book.setStatus("COMPLETED");
-            book.setChunkCount(classifiedChunks.size());
-            book.setEntityCount(entityDocs.size());
-
-            sendProgress(sessionId, IngestionEvent.builder()
-                    .bookId(bookId).worldId(worldId).status("COMPLETED").progress(100)
-                    .message("Ingestion complete: " + classifiedChunks.size() + " chunks, " + entityDocs.size() + " entities")
-                    .totalChunks(classifiedChunks.size()).entitiesExtracted(entityDocs.size())
-                    .chunksProcessed(classifiedChunks.size())
-                    .build(), WebSocketMessage.MessageType.INGESTION_COMPLETED);
-
-            log.info("[{}] Ingestion complete — {} chunks, {} entities", bookId, classifiedChunks.size(), entityDocs.size());
+            completeStructuredIngestion(book, sessionId, foundrySystem, classifiedChunks, entityDocs);
 
         } catch (Exception e) {
             log.error("[{}] Ingestion failed", book.getBookId(), e);
@@ -202,6 +158,89 @@ public class IngestionPipeline {
             sendProgress(sessionId, IngestionEvent.builder()
                     .bookId(book.getBookId()).worldId(worldId).status("FAILED").progress(100)
                     .message("Ingestion failed").error(e.getMessage())
+                    .build(), WebSocketMessage.MessageType.INGESTION_FAILED);
+        }
+    }
+
+    @Async
+    public void ingestCompendiumAsync(CompendiumIngestionRequest request) {
+        String worldId = request.getWorldId();
+        String foundrySystem = request.getFoundrySystem();
+        String packId = request.getPackId();
+        String packLabel = request.getPackLabel() != null && !request.getPackLabel().isBlank()
+                ? request.getPackLabel()
+                : packId;
+
+        BookDto book = createBookRecord(
+                worldId,
+                foundrySystem,
+                "Compendium: " + packLabel,
+                packId,
+                "compendium",
+                packId
+        );
+
+        sendProgress(request.getSessionId(), IngestionEvent.builder()
+                .bookId(book.getBookId()).worldId(worldId).status("STARTED").progress(0)
+                .message("Starting ingestion of compendium " + packLabel)
+                .build(), WebSocketMessage.MessageType.INGESTION_STARTED);
+
+        try {
+            book.setStatus("PARSING");
+            sendProgress(request.getSessionId(), IngestionEvent.builder()
+                    .bookId(book.getBookId()).worldId(worldId).status("PARSING").progress(10)
+                    .message("Collecting compendium entries…")
+                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+
+            List<Document> rawDocs = request.getEntries().stream()
+                    .map(entry -> toCompendiumDocument(entry, request, book.getBookId()))
+                    .collect(Collectors.toCollection(ArrayList::new));
+
+            TokenTextSplitter splitter = TokenTextSplitter.builder()
+                    .withChunkSize(2000)
+                    .withMinChunkSizeChars(300)
+                    .withMinChunkLengthToEmbed(50)
+                    .build();
+
+            List<Document> chunks = rawDocs.stream()
+                    .map(splitter::split)
+                    .flatMap(Collection::stream)
+                    .collect(Collectors.toCollection(ArrayList::new));
+
+            enrichBaseMetadata(chunks, book.getBookId(), worldId, foundrySystem, book.getBookTitle(), packId);
+
+            int totalChunks = chunks.size();
+            sendProgress(request.getSessionId(), IngestionEvent.builder()
+                    .bookId(book.getBookId()).worldId(worldId).status("PARSING").progress(25)
+                    .message("Prepared " + request.getEntries().size() + " entries into " + totalChunks + " chunks")
+                    .totalChunks(totalChunks)
+                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+
+            book.setStatus("CLASSIFYING");
+            sendProgress(request.getSessionId(), IngestionEvent.builder()
+                    .bookId(book.getBookId()).worldId(worldId).status("CLASSIFYING").progress(30)
+                    .message("Classifying compendium content…")
+                    .totalChunks(totalChunks)
+                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+
+            List<Document> classifiedChunks = documentClassifier.classify(chunks);
+
+            book.setStatus("EXTRACTING");
+            sendProgress(request.getSessionId(), IngestionEvent.builder()
+                    .bookId(book.getBookId()).worldId(worldId).status("EXTRACTING").progress(60)
+                    .message("Extracting entities from compendium…")
+                    .totalChunks(totalChunks)
+                    .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+
+            List<Document> entityDocs = entityExtractor.extractEntities(classifiedChunks);
+
+            completeStructuredIngestion(book, request.getSessionId(), foundrySystem, classifiedChunks, entityDocs);
+        } catch (Exception e) {
+            log.error("[{}] Compendium ingestion failed", book.getBookId(), e);
+            book.setStatus("FAILED");
+            sendProgress(request.getSessionId(), IngestionEvent.builder()
+                    .bookId(book.getBookId()).worldId(worldId).status("FAILED").progress(100)
+                    .message("Compendium ingestion failed").error(e.getMessage())
                     .build(), WebSocketMessage.MessageType.INGESTION_FAILED);
         }
     }
@@ -258,6 +297,8 @@ public class IngestionPipeline {
                         .foundrySystem(foundrySystem)
                         .bookTitle(bookTitle)
                         .fileName(fileName)
+                        .sourceType(fileName != null && fileName.contains(".") ? "pdf" : "compendium")
+                        .sourceId(fileName)
                         .chunkCount((int) totalChunks)
                         .entityCount((int) entityCount)
                         .status("COMPLETED")
@@ -289,6 +330,89 @@ public class IngestionPipeline {
             // game_system kept for backward compatibility
             meta.put("game_system", foundrySystem);
         }
+    }
+
+    private BookDto createBookRecord(String worldId, String foundrySystem, String bookTitle,
+                                     String fileName, String sourceType, String sourceId) {
+        String bookId = UUID.randomUUID().toString();
+        BookDto book = BookDto.builder()
+                .bookId(bookId)
+                .worldId(worldId)
+                .foundrySystem(foundrySystem)
+                .bookTitle(bookTitle)
+                .fileName(fileName)
+                .sourceType(sourceType)
+                .sourceId(sourceId)
+                .uploadDate(Instant.now())
+                .status("UPLOADING")
+                .build();
+        bookRegistry.put(bookId, book);
+        return book;
+    }
+
+    private Document toCompendiumDocument(CompendiumIngestionRequest.EntryDto entry,
+                                          CompendiumIngestionRequest request,
+                                          String bookId) {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("book_id", bookId);
+        metadata.put("world_id", request.getWorldId());
+        metadata.put("foundry_system", request.getFoundrySystem());
+        metadata.put("book_title", "Compendium: " + (request.getPackLabel() != null ? request.getPackLabel() : request.getPackId()));
+        metadata.put("file_name", request.getPackId());
+        metadata.put("game_system", request.getFoundrySystem());
+        metadata.put("source_type", "compendium");
+        metadata.put("pack_id", request.getPackId());
+        metadata.put("pack_label", request.getPackLabel());
+        metadata.put("pack_document_type", request.getDocumentType());
+        metadata.put("entry_id", entry.getId());
+        metadata.put("entry_name", entry.getName());
+        metadata.put("entry_type", entry.getType());
+        if (entry.getMetadata() != null) {
+            metadata.putAll(entry.getMetadata());
+        }
+        return new Document(entry.getText(), metadata);
+    }
+
+    private void completeStructuredIngestion(BookDto book, String sessionId, String foundrySystem,
+                                             List<Document> classifiedChunks, List<Document> entityDocs) {
+        String bookId = book.getBookId();
+        String worldId = book.getWorldId();
+
+        book.setStatus("STORING");
+        for (Document doc : classifiedChunks) {
+            doc.getMetadata().putIfAbsent("document_type", "raw_chunk");
+        }
+
+        List<Document> allDocuments = new ArrayList<>(classifiedChunks);
+        allDocuments.addAll(entityDocs);
+
+        sendProgress(sessionId, IngestionEvent.builder()
+                .bookId(bookId).worldId(worldId).status("STORING").progress(80)
+                .message("Storing " + allDocuments.size() + " documents in vector store…")
+                .totalChunks(classifiedChunks.size()).entitiesExtracted(entityDocs.size())
+                .build(), WebSocketMessage.MessageType.INGESTION_PROGRESS);
+
+        storeWithRateLimit(allDocuments);
+
+        try {
+            log.info("[{}] Enriching system profile for {}", bookId, foundrySystem);
+            systemProfileService.enrichFromIngestion(foundrySystem, classifiedChunks, entityDocs);
+        } catch (Exception enrichErr) {
+            log.warn("[{}] System profile enrichment failed (non-blocking): {}", bookId, enrichErr.getMessage());
+        }
+
+        book.setStatus("COMPLETED");
+        book.setChunkCount(classifiedChunks.size());
+        book.setEntityCount(entityDocs.size());
+
+        sendProgress(sessionId, IngestionEvent.builder()
+                .bookId(bookId).worldId(worldId).status("COMPLETED").progress(100)
+                .message("Ingestion complete: " + classifiedChunks.size() + " chunks, " + entityDocs.size() + " entities")
+                .totalChunks(classifiedChunks.size()).entitiesExtracted(entityDocs.size())
+                .chunksProcessed(classifiedChunks.size())
+                .build(), WebSocketMessage.MessageType.INGESTION_COMPLETED);
+
+        log.info("[{}] Ingestion complete — {} chunks, {} entities", bookId, classifiedChunks.size(), entityDocs.size());
     }
 
     private void storeWithRateLimit(List<Document> documents) {
@@ -346,4 +470,3 @@ public class IngestionPipeline {
         webSocketController.sendIngestionUpdate(sessionId, msg);
     }
 }
-

@@ -58,7 +58,9 @@ public class ItemGenerationAgent {
             String language) throws Exception {
 
         String systemId = request.getBlueprint().getSystemId();
-        var refOpt = systemProfileService.getReferenceCharacter(systemId, request.getActorType());
+        var refOpt = request.getReferenceCharacter() != null
+                ? java.util.Optional.of(request.getReferenceCharacter())
+                : systemProfileService.getReferenceCharacter(systemId, request.getActorType());
 
         boolean hasBlueprint = request.getBlueprint().getAvailableItems() != null &&
                 !request.getBlueprint().getAvailableItems().isEmpty();

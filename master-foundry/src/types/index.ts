@@ -48,6 +48,15 @@ export interface GenerationRequest {
     blueprint: CharacterBlueprint;
     language: string;
     sessionId?: string;
+    worldId?: string;
+    referenceCharacter?: {
+        systemId: string;
+        actorType: string;
+        label: string;
+        actorData: Record<string, any>;
+        items: Array<Record<string, any>>;
+        capturedAt?: number;
+    };
 }
 
 export interface ValidationError {
@@ -89,6 +98,16 @@ export type WebSocketEventName =
     | 'onIngestionProgress'
     | 'onIngestionCompleted'
     | 'onIngestionFailed'
+    | 'onTranscriptionReceived'
+    | 'onIntentConfirmationRequest'
+    | 'onIntentConfirmed'
+    | 'onIntentRejected'
+    | 'onDirectorNarration'
+    | 'onDirectorAudioReady'
+    | 'onNpcDialogueAudio'
+    | 'onNpcAudioReady'
+    | 'onSceneTransition'
+    | 'onAdventureStateUpdate'
     | 'onNotification'
     | 'onError'
     | 'onConnected'
@@ -120,6 +139,19 @@ export type MessageType =
     | 'INGESTION_PROGRESS'
     | 'INGESTION_COMPLETED'
     | 'INGESTION_FAILED'
+    // Transcription events
+    | 'TRANSCRIPTION_COMPLETED'
+    // Adventure Director events
+    | 'TRANSCRIPTION_RECEIVED'
+    | 'INTENT_CONFIRMATION_REQUEST'
+    | 'INTENT_CONFIRMED'
+    | 'INTENT_REJECTED'
+    | 'DIRECTOR_NARRATION'
+    | 'DIRECTOR_AUDIO_READY'
+    | 'NPC_DIALOGUE_AUDIO'
+    | 'NPC_AUDIO_READY'
+    | 'SCENE_TRANSITION'
+    | 'ADVENTURE_STATE_UPDATE'
     // Generic notifications
     | 'NOTIFICATION'
     | 'ERROR'
@@ -222,8 +254,12 @@ export interface ChatEntry {
 }
 
 export interface BookInfo {
-    id: string;
-    title: string;
+    bookId?: string;
+    id?: string;
+    bookTitle?: string;
+    title?: string;
+    sourceType?: string;
+    sourceId?: string;
     [key: string]: any;
 }
 
@@ -232,4 +268,129 @@ export interface BookInfo {
 export interface VTTAction {
     type: string;
     [key: string]: any;
+}
+
+// ── Adventure types ──
+
+export interface AdventureNpcInfo {
+    id: string;
+    name: string;
+    personality?: string;
+    secrets?: string;
+    objectives?: string;
+    currentDisposition?: string;
+    voiceId?: string;
+}
+
+export interface AdventureSummary {
+    id: string;
+    title: string;
+    system: string;
+    synopsis?: string;
+    actCount?: number;
+    npcCount?: number;
+    clueCount?: number;
+    npcs?: AdventureNpcInfo[];
+}
+
+export interface AdventureSceneInfo {
+    title: string;
+    readAloudText: string;
+}
+
+export interface AdventureRollInfo {
+    messageId?: string;
+    actorId?: string;
+    actorName?: string;
+    speakerAlias?: string;
+    tokenId?: string;
+    flavor?: string;
+    formula?: string;
+    total?: number;
+    target?: number | null;
+    margin?: number | null;
+    outcome?: string | null;
+    success?: boolean | null;
+    content?: string;
+    dice?: Array<{
+        faces?: number;
+        results: number[];
+    }>;
+    rolledAt?: number;
+}
+
+export interface AdventureStartResponse {
+    sessionId: string;
+    adventureId: string;
+    sessionName?: string;
+    participantNames?: string[];
+    sessionSummary?: string;
+    currentActId?: string;
+    currentSceneId?: string;
+    currentScene?: AdventureSceneInfo;
+    discoveredClues?: string[];
+    metNpcs?: string[];
+    tensionLevel?: number;
+}
+
+export interface AdventureSavedSessionSummary {
+    id: string;
+    sessionName: string;
+    participantNames?: string[];
+    sessionSummary?: string;
+    currentSceneId?: string;
+    currentSceneTitle?: string;
+    tensionLevel: number;
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface NpcDialoguePayload {
+    npcId: string;
+    npcName?: string;
+    text: string;
+    voiceId?: string;
+    emotion?: string;
+    /** URL to fetch the audio (preferred, avoids large base64 in WebSocket). */
+    audioUrl?: string;
+    /** @deprecated Use audioUrl instead. */
+    audioBase64?: string;
+}
+
+export interface IntentConfirmationPayload {
+    question: string;
+    reasoning?: string;
+}
+
+export interface DirectorNarrationPayload {
+    narration: string;
+    /** URL to fetch the narration audio (preferred, avoids large base64 in WebSocket). */
+    narrationAudioUrl?: string;
+    /** @deprecated Use narrationAudioUrl instead. */
+    narrationAudioBase64?: string;
+    actions?: VTTAction[];
+    reasoning?: string;
+}
+
+export interface AdventureStateUpdatePayload {
+    discoveredClues?: string[];
+    npcDispositionChanges?: Record<string, string>;
+    transitionTriggered?: string;
+    tensionDelta?: number;
+}
+
+export interface AdventureSession {
+    id: string;
+    adventureModuleId: string;
+    worldId?: string;
+    sessionName?: string;
+    sessionSummary?: string;
+    participantNames?: string[];
+    currentActId?: string;
+    currentSceneId?: string;
+    discoveredClueIds?: string[];
+    metNpcIds?: string[];
+    npcDispositions?: Record<string, string>;
+    playerDecisionLog?: string[];
+    tensionLevel: number;
 }

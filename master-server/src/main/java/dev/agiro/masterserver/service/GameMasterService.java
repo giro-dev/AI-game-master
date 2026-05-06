@@ -7,7 +7,6 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
@@ -42,12 +41,13 @@ public class GameMasterService {
                 Analyze the user's intent and respond with the appropriate JSON.
                 """;
 
-    public GameMasterService(ChatClient.Builder chatClientBuilder, VectorStore vectorStore, ChatMemory chatMemory) {
-            this.chatClient = chatClientBuilder.defaultOptions(ChatOptions.builder()
-                    .model("gpt-4.1-mini")
-                    .temperature(0.7)
-                    .build())
-                    .build();
+    public GameMasterService(ChatClient.Builder chatClientBuilder,
+                             VectorStore vectorStore,
+                             ChatMemory chatMemory,
+                             ModelRoutingService modelRoutingService) {
+        this.chatClient = chatClientBuilder
+                .defaultOptions(modelRoutingService.optionsFor("manual-answer"))
+                .build();
         this.vectorStore = vectorStore;
         this.chatMemory = chatMemory;
     }

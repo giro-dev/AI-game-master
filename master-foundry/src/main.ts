@@ -244,6 +244,14 @@ Hooks.on('chatMessage', (_chatlog: any, message: string) => {
     return true;
 });
 
+Hooks.on('createChatMessage', (message: any) => {
+    try {
+        void game.aiGM?.panel?.handleAdventureChatMessage?.(message);
+    } catch (e) {
+        console.warn('[AI-GM] Failed to process chat message for adventure rolls:', e);
+    }
+});
+
 /* ===================================================================== */
 /*  Actor context menu                                                    */
 /* ===================================================================== */
@@ -335,4 +343,3 @@ Hooks.on('getActorDirectoryEntryContext', (_appOrHtml: any, options: any[]) => {
         }
     });
 });
-
