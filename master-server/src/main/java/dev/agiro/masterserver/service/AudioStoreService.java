@@ -47,18 +47,30 @@ public class AudioStoreService {
     }
 
     /**
-     * Persists {@code wav} bytes and returns a URL path such as
-     * {@code /audio/3f2a1b4c-….wav} that can be fetched by the client.
+     * Persists audio bytes and returns a URL path such as
+     * {@code /audio/3f2a1b4c-….mp3}. The extension is inferred from the first
+     * bytes (MP3 = 0xFF 0xFB / 0xFF 0xF3 / ID3; WAV = RIFF).
      */
-    public String store(byte[] wav) {
-        String filename = UUID.randomUUID() + ".wav";
+    public String store(byte[] audio) {
+        String ext = detectExtension(audio);
+        String filename = UUID.randomUUID() + "." + ext;
         try {
-            Files.write(storePath.resolve(filename), wav);
+            Files.write(storePath.resolve(filename), audio);
         } catch (IOException e) {
             log.error("Failed to store audio file {}", filename, e);
             return null;
         }
         return baseUrl + "/" + filename;
+    }
+
+    private static String detectExtension(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) return "wav";
+        // WAV: RIFF header
+        if (bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F') return "wav";
+        // MP3: ID3 tag or sync bytes (0xFF 0xFB / 0xFF 0xF3 / 0xFF 0xF2)
+        if ((bytes[0] == 'I' && bytes[1] == 'D' && bytes[2] == '3') ||
+            ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xE0) == 0xE0)) return "mp3";
+        return "wav";
     }
 
     /** Deletes audio files older than the configured TTL. Runs every 10 minutes. */

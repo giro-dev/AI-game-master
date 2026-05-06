@@ -126,6 +126,52 @@ piper-tts:
     npc_male_deep: es_ES-davefx-medium
     npc_female: ca_ES-upc_ona-medium
 
+# ── TTS provider selection ─────────────────────────────────────────────────
+# Set to 'openai' to use OpenAI gpt-4o-mini-tts (multilingual, expressive).
+# Set to 'piper' (or omit) to use the local Wyoming-Piper service.
+tts:
+  provider: openai
+
+openai-tts:
+  model: gpt-4o-mini-tts
+  narrator-voice: verse
+  male-voices:
+    - coral
+    - ash
+    - ballad
+    - echo
+    - fable
+    - onyx
+    - sage
+    - shimmer
+    - verse
+    - cedar
+    - alloy
+  female-voices:
+    - nova
+    - coral
+    - aria
+  voices:
+    narrator: verse
+    npc_male_deep: coral
+    npc_female: nova
+    npc_neutral: alloy
+  # Per-voice tone instructions (used when no per-NPC personality is available)
+  instructions:
+    verse:  "Speak with a captivating, slightly dramatic storytelling voice. Vary pace and tone for narrative effect."
+    coral:  "Warm and approachable. Speak naturally as a friendly character in a role-playing adventure."
+    nova:   "Energetic and expressive. Convey clear emotion matching the character's mood."
+    aria:   "Soft, calm and natural. Gentle delivery with subtle warmth."
+    alloy:  "Clear, balanced and neutral delivery."
+    sage:   "Formal and measured. Professional tone appropriate for authority figures."
+  narrator-instructions: >
+    You are the Game Master narrator of a role-playing adventure.
+    Speak with a captivating, slightly mysterious storytelling voice.
+    Pace your narration for dramatic effect, varying tone to match the mood of the scene.
+  npc-instructions: >
+    You are a character in a role-playing adventure.
+    Speak naturally and expressively to match your personality and current emotional state.
+
 adventure:
   intent-confirmation-threshold: 0.7
   max-tension-level: 10

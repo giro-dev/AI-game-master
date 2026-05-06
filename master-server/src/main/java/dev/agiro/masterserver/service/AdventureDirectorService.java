@@ -44,7 +44,7 @@ import java.util.stream.Collectors;
  * The brain that turns a transcribed player utterance into a director turn:
  * classifies intent, asks for confirmation when needed, prompts the LLM with
  * the current narrative state, applies persistent state updates and
- * synthesises NPC voice lines via {@link TtsService}.
+ * synthesises NPC voice lines via {@link SpeechSynthesisService}.
  */
 @Slf4j
 @Service
@@ -74,7 +74,7 @@ public class AdventureDirectorService {
     private final AdventureSessionRepository adventureSessionRepository;
     private final IntentClassifierService intentClassifier;
     private final RollDecisionService rollDecisionService;
-    private final TtsService ttsService;
+    private final SpeechSynthesisService ttsService;
     private final AdventureSessionService adventureSessionService;
     private final PiperVoiceSelector piperVoiceSelector;
     private final AudioStoreService audioStoreService;
@@ -96,7 +96,7 @@ public class AdventureDirectorService {
                                     AdventureSessionRepository adventureSessionRepository,
                                     IntentClassifierService intentClassifier,
                                     RollDecisionService rollDecisionService,
-                                    TtsService ttsService,
+                                    SpeechSynthesisService ttsService,
                                     AdventureSessionService adventureSessionService,
                                     PiperVoiceSelector piperVoiceSelector,
                                     AudioStoreService audioStoreService,
@@ -457,8 +457,9 @@ public class AdventureDirectorService {
             }
             float pitch = npc != null && npc.getVoicePitch() != null ? npc.getVoicePitch() : 1.0f;
             float speed = npc != null && npc.getVoiceSpeed() != null ? npc.getVoiceSpeed() : 1.0f;
+            String instructions = buildNpcTtsInstructions(npc);
             try {
-                byte[] wav = ttsService.synthesize(d.getText(), voice, pitch, speed);
+                byte[] wav = ttsService.synthesizeWithInstructions(d.getText(), voice, instructions, pitch, speed);
                 if (wav != null && wav.length > 0) {
                     String url = audioStoreService.store(wav);
                     if (url != null) {
@@ -483,10 +484,27 @@ public class AdventureDirectorService {
         }
     }
 
+    /**
+     * Build TTS instructions that blend the voice's default tone with the NPC's
+     * personality. The instructions guide the TTS model to deliver the line
+     * with an appropriate character feel (supported by OpenAI gpt-4o-mini-tts).
+     */
+    private String buildNpcTtsInstructions(NpcProfile npc) {
+        if (npc == null || npc.getPersonality() == null || npc.getPersonality().isBlank()) {
+            return null;
+        }
+        String personality = npc.getPersonality();
+        int max = 200;
+        String hint = personality.length() > max ? personality.substring(0, max) + "…" : personality;
+        return "Character personality: " + hint + "\n" +
+               "Voice this character with appropriate emotion, accent, and pace for a role-playing game.";
+    }
+
     private void synthesiseNarration(String sessionId, DirectorResponse response) {
         if (response.getNarration() == null || response.getNarration().isBlank()) return;
         try {
-            byte[] wav = ttsService.synthesize(response.getNarration(), piperVoiceSelector.narratorVoice(), 1.0f, 1.0f);
+            byte[] wav = ttsService.synthesizeWithInstructions(
+                    response.getNarration(), piperVoiceSelector.narratorVoice(), null, 1.0f, 1.0f);
             if (wav != null && wav.length > 0) {
                 String url = audioStoreService.store(wav);
                 if (url != null) {

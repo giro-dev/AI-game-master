@@ -18,7 +18,7 @@ import java.nio.file.Paths;
 /**
  * Serves synthesized audio clips stored by {@link dev.agiro.masterserver.service.AudioStoreService}.
  *
- * <p>Example: {@code GET /audio/3f2a1b4c-….wav}
+ * <p>Example: {@code GET /audio/3f2a1b4c-….mp3} or {@code GET /audio/3f2a1b4c-….wav}
  */
 @RestController
 @RequestMapping("/audio")
@@ -32,7 +32,16 @@ public class AudioController {
     }
 
     @GetMapping("/{filename:.+\\.wav}")
-    public ResponseEntity<Resource> getAudio(@PathVariable String filename) {
+    public ResponseEntity<Resource> getWav(@PathVariable String filename) {
+        return getAudio(filename);
+    }
+
+    @GetMapping("/{filename:.+\\.mp3}")
+    public ResponseEntity<Resource> getMp3(@PathVariable String filename) {
+        return getAudio(filename);
+    }
+
+    private ResponseEntity<Resource> getAudio(String filename) {
         // Prevent path-traversal attacks
         if (filename.contains("..") || filename.contains("/") || filename.contains("\\")) {
             return ResponseEntity.badRequest().build();
@@ -42,10 +51,13 @@ public class AudioController {
         if (!resource.exists()) {
             return ResponseEntity.notFound().build();
         }
+        MediaType contentType = filename.endsWith(".mp3")
+                ? MediaType.parseMediaType("audio/mpeg")
+                : MediaType.parseMediaType("audio/wav");
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
                 .header(HttpHeaders.CACHE_CONTROL, "public, max-age=3600")
-                .contentType(MediaType.parseMediaType("audio/wav"))
+                .contentType(contentType)
                 .body(resource);
     }
 }

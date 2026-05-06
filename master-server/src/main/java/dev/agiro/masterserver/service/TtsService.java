@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.config.PiperTtsConfig;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -23,6 +24,7 @@ import java.util.Map;
 
 /**
  * Talks to the {@code wyoming-piper} TCP service to synthesize speech.
+ * Active when {@code tts.provider=piper} (default).
  *
  * <p>Wyoming protocol is line-delimited JSON: each event line is a JSON object
  * with optional {@code data_length} / {@code payload_length} fields. When
@@ -36,7 +38,8 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-public class TtsService {
+@ConditionalOnProperty(name = "tts.provider", havingValue = "piper", matchIfMissing = true)
+public class TtsService implements SpeechSynthesisService {
 
     private static final int CONNECT_TIMEOUT_MS = 5_000;
     private static final int READ_TIMEOUT_MS = 30_000;
