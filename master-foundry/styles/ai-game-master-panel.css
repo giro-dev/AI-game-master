@@ -47,6 +47,49 @@
   font-size: 0.9rem;
 }
 
+/* ─── Secondary Tabs (within a primary tab) ─────────────────────────── */
+
+.ai-gm-panel .ai-gm-subtabs {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0 0 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.ai-gm-panel .ai-gm-subtabs .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid #cfcfcf;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #555;
+}
+
+.ai-gm-panel .ai-gm-subtabs .item:hover {
+  background: rgba(155, 89, 182, 0.06);
+  border-color: rgba(155, 89, 182, 0.35);
+}
+
+.ai-gm-panel .ai-gm-subtabs .item.active {
+  color: #7b2fb5;
+  border-color: rgba(123, 47, 181, 0.45);
+  background: rgba(123, 47, 181, 0.08);
+}
+
+.ai-gm-panel .ai-gm-subtab-content {
+  display: none;
+}
+
+.ai-gm-panel .ai-gm-subtab-content.active {
+  display: block;
+}
+
 /* ─── Tab Content ──────────────────────────────────────────────────── */
 
 .ai-gm-panel .ai-gm-tab-content {
@@ -602,4 +645,3 @@
   margin: 0;
   font-size: 0.75rem;
 }
-

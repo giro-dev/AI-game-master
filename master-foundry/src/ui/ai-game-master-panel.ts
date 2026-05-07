@@ -1,11 +1,8 @@
 /**
  * AI Game Master Panel — Orchestrator
  *
- * Delegates all tab logic to dedicated subpanels.  This class only handles
- * Application lifecycle, merging getData results, and routing
- * activateListeners calls to the appropriate submodule.
- *
- * Tabs: Generate · Chat · Library · Configuration · Features
+ * Delegates all logic to dedicated subpanels and manages UI-level tab routing
+ * (primary + secondary tab strips).
  */
 
 import { GeneratePanel } from './generate-panel.js';
@@ -23,13 +20,11 @@ export class AIGameMasterPanel extends Application {
     private readonly _configPanel: ConfigPanel;
     private readonly _featuresPanel: FeaturesPanel;
 
+    private _pendingPrimaryTab: string | null = null;
+
     constructor(options: any = {}) {
         super(options);
 
-        // Build the context object that subpanels use to trigger re-renders
-        // and access the host Application element.  We capture `this` via a
-        // local alias so the arrow function closures remain valid even after
-        // the constructor returns.
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         const self = this;
         const ctx: PanelContext = {
@@ -41,40 +36,30 @@ export class AIGameMasterPanel extends Application {
         };
 
         this._generatePanel = new GeneratePanel(ctx);
-        this._sessionPanel  = new SessionPanel(ctx);
-        this._libraryPanel  = new LibraryPanel(ctx);
-        this._configPanel   = new ConfigPanel(ctx);
+        this._sessionPanel = new SessionPanel(ctx);
+        this._libraryPanel = new LibraryPanel(ctx);
+        this._configPanel = new ConfigPanel(ctx);
         this._featuresPanel = new FeaturesPanel(ctx);
 
-        // Give the features panel a reference to the session panel so it can
-        // delegate world-state collection during adventure narration.
         this._featuresPanel.setSessionPanel(this._sessionPanel);
     }
-
-    /* ------------------------------------------------------------------ */
-    /*  Foundry Application boilerplate                                     */
-    /* ------------------------------------------------------------------ */
 
     static get defaultOptions(): any {
         return foundry.utils.mergeObject(super.defaultOptions, {
             id: 'ai-gm-panel',
             title: 'AI Game Master',
             template: 'modules/ai-gm/templates/ai-game-master-panel.hbs',
-            width: 700,
-            height: 640,
+            width: 720,
+            height: 660,
             resizable: true,
             classes: ['ai-gm-panel-window'],
             tabs: [{
                 navSelector: '.ai-gm-tabs',
                 contentSelector: '.ai-gm-tab-content',
-                initial: 'generate'
+                initial: 'generator'
             }]
         });
     }
-
-    /* ------------------------------------------------------------------ */
-    /*  getData — merge contributions from all subpanels                   */
-    /* ------------------------------------------------------------------ */
 
     async getData(_options: any = {}): Promise<any> {
         const [generateData, sessionData, libraryData, configData, featuresData] = await Promise.all([
@@ -106,37 +91,78 @@ export class AIGameMasterPanel extends Application {
         };
     }
 
-    /* ------------------------------------------------------------------ */
-    /*  activateListeners — delegate to each subpanel                      */
-    /* ------------------------------------------------------------------ */
-
     activateListeners(html: any): void {
         super.activateListeners(html);
+
+        this._wireSecondaryTabs(html);
+
         this._generatePanel.activateListeners(html);
         this._sessionPanel.activateListeners(html);
         this._libraryPanel.activateListeners(html);
         this._configPanel.activateListeners(html);
         this._featuresPanel.activateListeners(html);
-    }
 
-    /* ------------------------------------------------------------------ */
-    /*  close — clean up subpanel resources                                */
-    /* ------------------------------------------------------------------ */
+        this._activatePendingPrimaryTab(html);
+    }
 
     async close(options: any = {}): Promise<void> {
         this._sessionPanel.close();
         return super.close(options);
     }
 
-    /* ------------------------------------------------------------------ */
-    /*  Public API consumed by main.ts hooks                               */
-    /* ------------------------------------------------------------------ */
+    /** Public entry point to open panel and optionally jump to a primary tab. */
+    open(tab: string = 'generator'): void {
+        this._pendingPrimaryTab = tab;
+        this.render(true);
+    }
 
-    /**
-     * Handle an incoming Foundry chat message for adventure roll interpretation.
-     * Called from the `createChatMessage` hook registered in main.ts.
-     */
+    /** Called from `createChatMessage` hook to process adventure roll context. */
     async handleAdventureChatMessage(message: any): Promise<void> {
         return this._featuresPanel.handleAdventureChatMessage(message);
+    }
+
+    private _activatePendingPrimaryTab(html: any): void {
+        const pending = this._pendingPrimaryTab;
+        this._pendingPrimaryTab = null;
+        if (!pending) return;
+
+        const item = html.find(`.ai-gm-tabs .item[data-tab="${pending}"]`).first();
+        if (item.length) {
+            item.trigger('click');
+        }
+    }
+
+    private _wireSecondaryTabs(html: any): void {
+        const activateGroup = (container: any, subtab: string): void => {
+            container.find('.ai-gm-subtabs .item').removeClass('active');
+            container.find(`.ai-gm-subtabs .item[data-subtab="${subtab}"]`).addClass('active');
+
+            container.find('.ai-gm-subtab-content').removeClass('active');
+            container.find(`.ai-gm-subtab-content[data-subtab-content="${subtab}"]`).addClass('active');
+        };
+
+        const configureSubtabs = (primaryTabId: string): void => {
+            const tabContainer = html.find(`.tab[data-tab="${primaryTabId}"]`);
+            if (!tabContainer.length) return;
+
+            const nav = tabContainer.find('.ai-gm-subtabs').first();
+            if (!nav.length) return;
+
+            nav.find('.item').off('click.ai-gm-subtabs').on('click.ai-gm-subtabs', (ev: any) => {
+                ev.preventDefault();
+                const subtab = String(ev.currentTarget?.dataset?.subtab || '');
+                if (!subtab) return;
+                activateGroup(tabContainer, subtab);
+            });
+
+            const active = nav.find('.item.active').first();
+            const initialSubtab = active.length
+                ? String(active.data('subtab'))
+                : String(nav.find('.item').first().data('subtab') || '');
+            if (initialSubtab) activateGroup(tabContainer, initialSubtab);
+        };
+
+        configureSubtabs('generator');
+        configureSubtabs('configuration');
     }
 }

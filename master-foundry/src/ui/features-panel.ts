@@ -124,7 +124,15 @@ export class FeaturesPanel {
             await game.settings.set(MODULE_ID, 'enableTranscription', ev.target.checked);
             this.ctx.render(false);
         });
+        html.find('#ai-gm-enable-transcription-quick').on('change', async (ev: any) => {
+            await game.settings.set(MODULE_ID, 'enableTranscription', ev.target.checked);
+            this.ctx.render(false);
+        });
         html.find('#ai-gm-enable-game-director').on('change', async (ev: any) => {
+            await game.settings.set(MODULE_ID, 'enableGameDirector', ev.target.checked);
+            this.ctx.render(false);
+        });
+        html.find('#ai-gm-enable-game-director-quick').on('change', async (ev: any) => {
             await game.settings.set(MODULE_ID, 'enableGameDirector', ev.target.checked);
             this.ctx.render(false);
         });

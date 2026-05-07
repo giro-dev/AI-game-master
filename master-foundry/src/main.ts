@@ -78,9 +78,9 @@ Hooks.on('ready', () => {
         postProcessor,
         skillRegistry,
         panel,
-        open(): void {
+        open(tab: string = 'generator'): void {
             if (panel) {
-                panel.render(true);
+                panel.open(tab);
             } else {
                 ui.notifications?.error('AI Game Master panel failed to initialize. Check the console.');
             }
@@ -169,6 +169,54 @@ Hooks.on('ready', () => {
 Hooks.on('getSceneControlButtons', (controls: any) => {
     if (!game.user?.isGM) return;
 
+    const openTab = (tab: string): void => {
+        try { game.aiGM?.open(tab); }
+        catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
+    };
+
+    const objectTools = {
+        'ai-gm-generator': {
+            name: 'ai-gm-generator',
+            title: 'Generator',
+            icon: 'fa-solid fa-magic',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openTab('generator')
+        },
+        'ai-gm-chat': {
+            name: 'ai-gm-chat',
+            title: 'Chat',
+            icon: 'fa-solid fa-comments',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openTab('chat')
+        },
+        'ai-gm-configuration': {
+            name: 'ai-gm-configuration',
+            title: 'Configuration',
+            icon: 'fa-solid fa-cogs',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openTab('configuration')
+        },
+        'ai-gm-game-director': {
+            name: 'ai-gm-game-director',
+            title: 'Game Director',
+            icon: 'fa-solid fa-dragon',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openTab('game-director')
+        },
+        'ai-gm-transcription': {
+            name: 'ai-gm-transcription',
+            title: 'Transcription',
+            icon: 'fa-solid fa-microphone',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openTab('transcription')
+        }
+    };
+
     // v13+/v14: controls is a Record<string, SceneControl> (object with named keys)
     if (controls && typeof controls === 'object' && !Array.isArray(controls)) {
         if (!controls['ai-gm']) {
@@ -177,19 +225,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
                 title: 'AI Game Master',
                 icon: 'fa-solid fa-hat-wizard',
                 visible: game.user.isGM,
-                tools: {
-                    'ai-gm-open': {
-                        name: 'ai-gm-open',
-                        title: 'Open Panel',
-                        icon: 'fa-solid fa-door-open',
-                        button: true,
-                        visible: game.user.isGM,
-                        onChange: () => {
-                            try { game.aiGM?.open(); }
-                            catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
-                        }
-                    }
-                }
+                tools: objectTools
             };
         }
         return;
@@ -204,17 +240,44 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
             title: 'AI Game Master',
             icon: 'fas fa-hat-wizard',
             visible: true,
-            tools: [{
-                name: 'ai-gm-open',
-                title: 'Open Panel',
-                icon: 'fas fa-door-open',
-                button: true,
-                onClick: () => {
-                    try { game.aiGM?.open(); }
-                    catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
+            tools: [
+                {
+                    name: 'ai-gm-generator',
+                    title: 'Generator',
+                    icon: 'fas fa-magic',
+                    button: true,
+                    onClick: () => openTab('generator')
+                },
+                {
+                    name: 'ai-gm-chat',
+                    title: 'Chat',
+                    icon: 'fas fa-comments',
+                    button: true,
+                    onClick: () => openTab('chat')
+                },
+                {
+                    name: 'ai-gm-configuration',
+                    title: 'Configuration',
+                    icon: 'fas fa-cogs',
+                    button: true,
+                    onClick: () => openTab('configuration')
+                },
+                {
+                    name: 'ai-gm-game-director',
+                    title: 'Game Director',
+                    icon: 'fas fa-dragon',
+                    button: true,
+                    onClick: () => openTab('game-director')
+                },
+                {
+                    name: 'ai-gm-transcription',
+                    title: 'Transcription',
+                    icon: 'fas fa-microphone',
+                    button: true,
+                    onClick: () => openTab('transcription')
                 }
-            }],
-            activeTool: 'ai-gm-open'
+            ],
+            activeTool: 'ai-gm-generator'
         });
     }
 });
