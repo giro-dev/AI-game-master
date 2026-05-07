@@ -19,7 +19,7 @@ export class WebSocketSessionManager {
     /**
      * Create a new generation session
      */
-    createSession(button: JQuery<HTMLElement>): Session {
+    createSession(button: any): Session {
         // Cleanup previous session if exists
         this.cleanup();
 

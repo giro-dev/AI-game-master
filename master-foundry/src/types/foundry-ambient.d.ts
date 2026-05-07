@@ -32,6 +32,7 @@ declare class Application {
     getData(_options?: any): Promise<any> | any;
     activateListeners(html: any): void;
     render(force?: boolean, options?: any): this;
+    close(options?: any): Promise<void>;
     options: any;
 }
 
