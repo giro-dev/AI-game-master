@@ -842,7 +842,7 @@ export class FeaturesPanel {
     }
 
     private _collectWorldState(): any {
-        return this._sessionPanel?._collectWorldState() ?? {
+        return this._sessionPanel?.collectWorldState() ?? {
             sceneName: game.scenes?.active?.name ?? null,
             sceneId: game.scenes?.active?.id ?? null,
             tokens: [],

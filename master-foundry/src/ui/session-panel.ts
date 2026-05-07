@@ -93,7 +93,7 @@ export class SessionPanel {
             foundrySystem: game.system.id,
             conversationId: `${game.world.id}-session`,
             abilities: token ? this._collectTokenAbilities(token) : [],
-            worldState: this._collectWorldState()
+            worldState: this.collectWorldState()
         };
 
         try {
@@ -243,7 +243,7 @@ export class SessionPanel {
         return abilities;
     }
 
-    _collectWorldState(): any {
+    collectWorldState(): any {
         const scene = game.scenes?.active;
         return {
             sceneName: scene?.name ?? null,

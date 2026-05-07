@@ -38,15 +38,13 @@ export function registerSettings(): void {
 
     // Legacy setting kept for backward compatibility
     try {
-        if (!game.settings.settings.has(`${MODULE_ID}.defaultItemPack`)) {
-            game.settings.register(MODULE_ID, 'defaultItemPack', {
-                name: 'Default Item Pack',
-                scope: 'world',
-                config: false,
-                type: String,
-                default: ''
-            });
-        }
+        game.settings.register(MODULE_ID, 'defaultItemPack', {
+            name: 'Default Item Pack',
+            scope: 'world',
+            config: false,
+            type: String,
+            default: ''
+        });
     } catch (_e) { /* already registered */ }
 }
 

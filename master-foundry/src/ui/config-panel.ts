@@ -172,11 +172,12 @@ export class ConfigPanel {
         const actor = game.actors?.get(actorId);
         if (!actor) { ui.notifications.error('No s\'ha trobat l\'actor seleccionat.'); return; }
 
-        await this._storeReferenceCharacter(actor);
+        await this.storeReferenceCharacter(actor);
         this.ctx.render(false);
     }
 
-    private async _storeReferenceCharacter(actor: any): Promise<void> {
+    /** Store a reference character (called by context menu hook in main.ts). */
+    async storeReferenceCharacter(actor: any): Promise<void> {
         try {
             ui.notifications?.info(`Capturant "${actor.name}" com a reference character…`);
 
@@ -200,11 +201,6 @@ export class ConfigPanel {
             console.error('[AI-GM ConfigPanel] Reference character capture failed:', e);
             ui.notifications?.error(`No s'ha pogut desar la referència: ${e.message}`);
         }
-    }
-
-    /** Called by the context menu hook in main.ts to store a reference character. */
-    async storeReferenceCharacter(actor: any): Promise<void> {
-        return this._storeReferenceCharacter(actor);
     }
 
     /* ------------------------------------------------------------------ */
