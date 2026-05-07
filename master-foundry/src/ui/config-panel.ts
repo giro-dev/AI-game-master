@@ -177,6 +177,10 @@ export class ConfigPanel {
     }
 
     /** Store a reference character (called by context menu hook in main.ts). */
+    /**
+     * Stores a Foundry Actor as the backend reference character for its actor type.
+     * Called from both this panel's UI and the actor directory context-menu hook in main.ts.
+     */
     public async storeReferenceCharacter(actor: any): Promise<void> {
         try {
             ui.notifications?.info(`Capturant "${actor.name}" com a reference character…`);
