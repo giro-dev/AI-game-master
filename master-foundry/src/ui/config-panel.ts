@@ -177,7 +177,7 @@ export class ConfigPanel {
     }
 
     /** Store a reference character (called by context menu hook in main.ts). */
-    async storeReferenceCharacter(actor: any): Promise<void> {
+    public async storeReferenceCharacter(actor: any): Promise<void> {
         try {
             ui.notifications?.info(`Capturant "${actor.name}" com a reference character…`);
 
