@@ -170,7 +170,7 @@ public class CharacterGenerationService {
         
         // Build actor — extract name with fallbacks for localized AI responses
         CreateCharacterResponse.ActorDto actor = new CreateCharacterResponse.ActorDto();
-        String name = extractName(coreConcept);
+        String name = conceptAgent.extractName(coreConcept);
         actor.setName(name);
         actor.setType(actorType);
         actor.setImg("icons/svg/mystery-man.svg");

@@ -119,9 +119,10 @@ public class ConceptAgent {
     }
 
     /**
-     * Extract a reasonable name value from the concept map for logging.
+     * Extract a reasonable name value from the concept map.
+     * Used by this agent for logging and by CharacterGenerationService when assembling the response.
      */
-    private String extractName(Map<String, Object> coreConcept) {
+    public String extractName(Map<String, Object> coreConcept) {
         List<String> candidateKeys = List.of(
                 "name", "nombre", "nom", "nome", "Name",
                 "character_name", "characterName",

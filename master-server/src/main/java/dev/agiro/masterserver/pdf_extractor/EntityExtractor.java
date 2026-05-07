@@ -72,7 +72,7 @@ public class EntityExtractor {
                 chunkType, text
         );
 
-        String response = chatClient.prompt()
+        List<Map<String, Object>> response = chatClient.prompt()
                 .system(extractorPrompt)
                 .user(u -> u.text("{userMessage}").param("userMessage", userMessage))
                 .call()

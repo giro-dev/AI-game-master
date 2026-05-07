@@ -106,7 +106,7 @@ public class AdventureIngestionService {
                                      PiperVoiceSelector piperVoiceSelector,
                                      ModelRoutingService modelRoutingService) {
         this.chatClient = chatClientBuilder
-                .defaultOptions(modelRoutingService.optionsFor("concept-agent"))
+                .defaultOptions(modelRoutingService.optionsFor("adventure-ingestion"))
                 .build();
         this.adventureModuleRepository = adventureModuleRepository;
         this.pdfDocumentReader = pdfDocumentReader;

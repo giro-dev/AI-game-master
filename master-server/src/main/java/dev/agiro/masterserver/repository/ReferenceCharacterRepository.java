@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.ReferenceCharacterDto;
 import dev.agiro.masterserver.entity.ReferenceCharacterEntity;
-import dev.agiro.masterserver.repository.ReferenceCharacterJpaRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;

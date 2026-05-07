@@ -127,6 +127,13 @@ game-master:
         expected-format: json
         max-tokens: 1024
         latency-budget-ms: 8000
+      adventure-ingestion:
+        preferred-model: gpt-4.1-mini
+        fallback-model: gpt-4.1
+        temperature: 0.3
+        expected-format: json
+        max-tokens: 4096
+        latency-budget-ms: 60000
 
 whisper:
   url: http://localhost:9300

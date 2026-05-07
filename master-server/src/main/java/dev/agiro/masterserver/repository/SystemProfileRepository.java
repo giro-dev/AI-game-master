@@ -3,7 +3,6 @@ package dev.agiro.masterserver.repository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import dev.agiro.masterserver.entity.SystemProfileEntity;
-import dev.agiro.masterserver.repository.SystemProfileJpaRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
