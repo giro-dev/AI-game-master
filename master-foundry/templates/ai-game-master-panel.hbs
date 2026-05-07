@@ -1,19 +1,21 @@
 <div class="ai-gm-panel">
   {{!-- Tab Navigation --}}
   <nav class="ai-gm-tabs" data-group="primary">
-    <a class="item" data-tab="characters"><i class="fas fa-users"></i> Characters</a>
-    <a class="item" data-tab="items"><i class="fas fa-hat-wizard"></i> Items</a>
+    <a class="item" data-tab="generate"><i class="fas fa-magic"></i> Generate</a>
+    <a class="item" data-tab="chat"><i class="fas fa-comments"></i> Chat</a>
     <a class="item" data-tab="library"><i class="fas fa-book"></i> Library</a>
-    <a class="item" data-tab="session"><i class="fas fa-comments"></i> Session</a>
-    <a class="item" data-tab="adventure"><i class="fas fa-dragon"></i> Adventure</a>
-    <a class="item" data-tab="system"><i class="fas fa-cogs"></i> System</a>
+    <a class="item" data-tab="config"><i class="fas fa-cogs"></i> Configuration</a>
+    <a class="item" data-tab="features"><i class="fas fa-sliders-h"></i> Features</a>
   </nav>
 
   {{!-- Tab Content --}}
   <section class="ai-gm-tab-content">
 
-    {{!-- ═══ CHARACTERS TAB ═══ --}}
-    <div class="tab" data-tab="characters" data-group="primary">
+    {{!-- ═══ GENERATE TAB ═══ --}}
+    <div class="tab" data-tab="generate" data-group="primary">
+
+      {{!-- Characters section --}}
+      <h4 class="section-header"><i class="fas fa-users"></i> Characters</h4>
       <div class="form-group">
         <label for="gm-actor-type">Character Type</label>
         <select id="gm-actor-type">
@@ -84,10 +86,9 @@
 
       {{!-- Result --}}
       <div id="char-result"></div>
-    </div>
 
-    {{!-- ═══ ITEMS TAB ═══ --}}
-    <div class="tab" data-tab="items" data-group="primary">
+      {{!-- Items section --}}
+      <h4 class="section-header" style="margin-top:1rem;"><i class="fas fa-hat-wizard"></i> Items</h4>
       <div class="form-group">
         <label for="gm-item-prompt">Item Description</label>
         <textarea id="gm-item-prompt" rows="3" placeholder="Describe the items to generate..."></textarea>
@@ -121,6 +122,66 @@
         <div class="progress-bar-track">
           <div class="progress-bar-fill" id="item-progress-bar"></div>
         </div>
+      </div>
+    </div>
+
+    {{!-- ═══ CHAT TAB ═══ --}}
+    <div class="tab" data-tab="chat" data-group="primary">
+      <p class="hint">Ask the AI Game Master anything — rules questions, narration help, action resolution.</p>
+
+      {{!-- Token context selector --}}
+      <div class="selected-tokens-widget">
+        <div class="selected-tokens-header">
+          <label>
+            <input type="checkbox" id="gm-include-tokens" checked>
+            <i class="fas fa-users"></i> Include tokens
+          </label>
+        </div>
+
+        <div class="token-section">
+          <div class="token-section-title"><i class="fas fa-mouse-pointer"></i> Canvas selection</div>
+          <div class="selected-tokens-list" id="gm-selected-tokens">
+            <span class="empty-state">No tokens selected on canvas</span>
+          </div>
+        </div>
+
+        <div class="token-section">
+          <div class="token-section-title"><i class="fas fa-list"></i> Scene tokens</div>
+          <div class="scene-tokens-actions">
+            <button type="button" class="btn" data-action="sync-tokens" title="Copy the current canvas selection into the list below">
+              <i class="fas fa-sync"></i> Use canvas selection
+            </button>
+            <button type="button" class="btn" data-action="clear-tokens" title="Clear selected tokens">
+              <i class="fas fa-times"></i> Clear
+            </button>
+          </div>
+          <div class="scene-tokens-list" id="gm-scene-tokens">
+            <span class="empty-state">No scene loaded</span>
+          </div>
+          <p class="hint">Selection here is kept even if the canvas selection is cleared (e.g. when switching tools).</p>
+        </div>
+      </div>
+
+      <div class="chat-log" id="gm-chat-log">
+        {{#each chatHistory}}
+        <div class="chat-entry">
+          <span class="chat-sender">{{this.sender}}</span>
+          <div class="chat-text">{{{this.text}}}</div>
+        </div>
+        {{/each}}
+        {{#unless chatHistory.length}}
+        <p class="empty-state">No messages yet. Ask the AI something!</p>
+        {{/unless}}
+      </div>
+
+      <div class="form-group">
+        <textarea id="gm-session-prompt" rows="2" placeholder="Ask the AI Game Master..."></textarea>
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary btn-block" data-action="ask-ai">
+          <i class="fas fa-paper-plane"></i> Ask AI
+        </button>
       </div>
     </div>
 
@@ -194,220 +255,8 @@
       </div>
     </div>
 
-    {{!-- ═══ SESSION TAB ═══ --}}
-    <div class="tab" data-tab="session" data-group="primary">
-      <p class="hint">Ask the AI Game Master anything — rules questions, narration help, action resolution.</p>
-
-      {{!-- Token context selector --}}
-      <div class="selected-tokens-widget">
-        <div class="selected-tokens-header">
-          <label>
-            <input type="checkbox" id="gm-include-tokens" checked>
-            <i class="fas fa-users"></i> Include tokens
-          </label>
-        </div>
-
-        <div class="token-section">
-          <div class="token-section-title"><i class="fas fa-mouse-pointer"></i> Canvas selection</div>
-          <div class="selected-tokens-list" id="gm-selected-tokens">
-            <span class="empty-state">No tokens selected on canvas</span>
-          </div>
-        </div>
-
-        <div class="token-section">
-          <div class="token-section-title"><i class="fas fa-list"></i> Scene tokens</div>
-          <div class="scene-tokens-actions">
-            <button type="button" class="btn" data-action="sync-tokens" title="Copy the current canvas selection into the list below">
-              <i class="fas fa-sync"></i> Use canvas selection
-            </button>
-            <button type="button" class="btn" data-action="clear-tokens" title="Clear selected tokens">
-              <i class="fas fa-times"></i> Clear
-            </button>
-          </div>
-          <div class="scene-tokens-list" id="gm-scene-tokens">
-            <span class="empty-state">No scene loaded</span>
-          </div>
-          <p class="hint">Selection here is kept even if the canvas selection is cleared (e.g. when switching tools).</p>
-        </div>
-      </div>
-
-      <div class="chat-log" id="gm-chat-log">
-        {{#each chatHistory}}
-        <div class="chat-entry">
-          <span class="chat-sender">{{this.sender}}</span>
-          <div class="chat-text">{{{this.text}}}</div>
-        </div>
-        {{/each}}
-        {{#unless chatHistory.length}}
-        <p class="empty-state">No messages yet. Ask the AI something!</p>
-        {{/unless}}
-      </div>
-
-      <div class="form-group">
-        <textarea id="gm-session-prompt" rows="2" placeholder="Ask the AI Game Master..."></textarea>
-      </div>
-
-      <div class="btn-row">
-        <button type="button" class="btn btn-primary btn-block" data-action="ask-ai">
-          <i class="fas fa-paper-plane"></i> Ask AI
-        </button>
-      </div>
-    </div>
-
-    {{!-- ═══ ADVENTURE TAB ═══ --}}
-    <div class="tab" data-tab="adventure" data-group="primary">
-      <h4 class="section-header">Adventure Director</h4>
-      <p class="hint">Carrega una aventura, inicia una sessió i deixa que el director narri en temps real.</p>
-
-      <div class="form-group">
-        <label for="adventure-select">Aventura</label>
-        <select id="adventure-select" {{#if adventureSessionActive}}disabled{{/if}}>
-          <option value="">— Selecciona una aventura —</option>
-          {{#each adventures}}
-            <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.title}} ({{this.system}})</option>
-          {{/each}}
-        </select>
-      </div>
-
-      <div class="form-group" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-        <button type="button" class="btn" data-action="upload-adventure" {{#if adventureSessionActive}}disabled{{/if}}>
-          <i class="fas fa-upload"></i> Pujar PDF d'aventura
-        </button>
-        {{#unless adventureSessionActive}}
-          <button type="button" class="btn btn-primary" data-action="start-adventure" {{#unless adventureSelected}}disabled{{/unless}}>
-            <i class="fas fa-play"></i> Iniciar aventura
-          </button>
-        {{/unless}}
-        {{#if adventureSessionActive}}
-          <button type="button" class="btn" data-action="end-adventure">
-            <i class="fas fa-stop"></i> Finalitzar
-          </button>
-        {{/if}}
-      </div>
-
-      {{#if adventureSelected}}
-        {{#unless adventureSessionActive}}
-        {{#if adventureSavedSessions.length}}
-          <div class="adventure-history" style="margin-top:8px;">
-            <h5 class="section-header">Sessions anteriors</h5>
-            <div style="display:flex;flex-direction:column;gap:6px;">
-              {{#each adventureSavedSessions}}
-                <div style="border:1px solid var(--color-border-light-tertiary);border-radius:6px;padding:8px;background:var(--color-bg-option);">
-                  <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">
-                    <div style="min-width:0;flex:1;">
-                      <strong>{{this.sessionName}}</strong>
-                      {{#if this.currentSceneTitle}}
-                        <div class="hint">Escena actual: {{this.currentSceneTitle}}</div>
-                      {{/if}}
-                      {{#if this.participantNamesText}}
-                        <div class="hint">Jugadors: {{this.participantNamesText}}</div>
-                      {{/if}}
-                      {{#if this.sessionSummary}}
-                        <div style="margin-top:4px;white-space:pre-wrap;">{{this.sessionSummary}}</div>
-                      {{/if}}
-                      <div class="hint" style="margin-top:4px;">
-                        Tensió: {{this.tensionLevel}} / 10
-                        {{#if this.updatedAtLabel}} · Actualitzada: {{this.updatedAtLabel}}{{/if}}
-                      </div>
-                    </div>
-                    <button type="button" class="btn" data-action="resume-adventure" data-session-id="{{this.id}}">
-                      <i class="fas fa-rotate-left"></i> Reprendre
-                    </button>
-                  </div>
-                </div>
-              {{/each}}
-            </div>
-          </div>
-        {{/if}}
-        {{/unless}}
-      {{/if}}
-
-      {{#if adventureSessionActive}}
-        <div class="adventure-session" style="border:1px solid var(--color-border-light-tertiary);padding:8px;border-radius:6px;margin-top:8px;">
-          {{#if adventureSessionName}}
-            <h4 class="section-header">{{adventureSessionName}}</h4>
-          {{/if}}
-          {{#if adventureSessionParticipants.length}}
-            <div class="hint" style="margin-bottom:6px;">Jugadors: {{#each adventureSessionParticipants}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</div>
-          {{/if}}
-          {{#if adventureSessionSummary}}
-            <div style="margin-bottom:8px;padding:6px 8px;background:var(--color-bg-option);border-radius:4px;white-space:pre-wrap;">{{adventureSessionSummary}}</div>
-          {{/if}}
-          {{#if adventureScene}}
-            <h4 class="section-header">{{adventureScene.title}}</h4>
-            <div class="read-aloud" style="font-style:italic;white-space:pre-wrap;border-left:3px solid var(--color-text-hyperlink);padding:6px 10px;margin-bottom:8px;">{{adventureScene.readAloudText}}</div>
-          {{/if}}
-
-          <div class="adventure-status" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-            <div>
-              <strong>Pistes descobertes</strong>
-              <ul style="margin:4px 0 0 1rem;padding:0;">
-                {{#each discoveredClues}}<li>{{this}}</li>{{else}}<li class="hint">cap encara</li>{{/each}}
-              </ul>
-            </div>
-            <div>
-              <strong>NPCs trobats</strong>
-              <ul style="margin:4px 0 0 1rem;padding:0;">
-                {{#each metNpcs}}<li>{{this}}</li>{{else}}<li class="hint">cap encara</li>{{/each}}
-              </ul>
-            </div>
-          </div>
-
-          {{!-- NPC list with create-actor buttons --}}
-          {{#if adventureNpcs.length}}
-          <div style="margin-bottom:8px;">
-            <strong><i class="fas fa-users"></i> NPCs de l'aventura</strong>
-            <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px;">
-              {{#each adventureNpcs}}
-              <div style="display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;background:var(--color-bg-option);">
-                <i class="fas fa-user" style="opacity:0.6;"></i>
-                <span style="flex:1;font-size:0.9em;">
-                  <strong>{{this.name}}</strong>
-                  {{#if this.currentDisposition}}<span class="hint">({{this.currentDisposition}})</span>{{/if}}
-                </span>
-                <button type="button" class="btn btn-sm" data-action="create-adventure-npc" data-npc-id="{{this.id}}" title="Crear actor a Foundry">
-                  <i class="fas fa-user-plus"></i>
-                </button>
-              </div>
-              {{/each}}
-            </div>
-          </div>
-          {{/if}}
-
-          <div class="tension" style="margin-bottom:8px;">
-            <label><strong>Tensió</strong> {{tensionLevel}} / {{tensionMax}}</label>
-            <div style="background:var(--color-bg-option);height:10px;border-radius:5px;overflow:hidden;border:1px solid var(--color-border-dark-tertiary);">
-              <div style="height:100%;width:{{tensionPct}}%;background:linear-gradient(90deg,#4caf50,#ff9800,#f44336);"></div>
-            </div>
-          </div>
-
-          {{#if speakingNpc}}
-            <div class="npc-speaking" style="background:var(--color-bg-option);padding:6px 8px;border-radius:4px;margin-bottom:8px;">
-              <i class="fas fa-volume-up"></i> <strong>{{speakingNpc.npcName}}</strong> està parlant…
-            </div>
-          {{/if}}
-
-          <div class="form-group" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-            <button type="button" class="btn {{#if isRecording}}btn-danger{{/if}}" data-action="toggle-mic" style="flex-shrink:0;">
-              <i class="fas fa-microphone{{#if isRecording}}-slash{{/if}}"></i>
-            </button>
-            <input type="text" id="adventure-text-input" placeholder="Escriu la teva acció…" style="flex:1;min-width:120px;" {{#if isProcessing}}disabled{{/if}} />
-            <button type="button" class="btn" data-action="send-adventure-text" style="flex-shrink:0;" {{#if isProcessing}}disabled{{/if}}>
-              <i class="fas fa-paper-plane"></i>
-            </button>
-            {{#if isProcessing}}<span class="hint" style="width:100%;"><i class="fas fa-spinner fa-spin"></i> Processant…</span>{{/if}}
-          </div>
-
-          <h5 class="section-header" style="margin-top:8px;">Registre</h5>
-          <div class="adventure-log" style="max-height:240px;overflow-y:auto;border:1px solid var(--color-border-light-tertiary);padding:6px;border-radius:4px;font-size:0.9em;">
-            {{#each adventureLog}}<div style="margin-bottom:4px;">{{this}}</div>{{else}}<div class="hint">Encara no hi ha res…</div>{{/each}}
-          </div>
-        </div>
-      {{/if}}
-    </div>
-
-    {{!-- ═══ SYSTEM TAB ═══ --}}
-    <div class="tab" data-tab="system" data-group="primary">
+    {{!-- ═══ CONFIGURATION TAB ═══ --}}
+    <div class="tab" data-tab="config" data-group="primary">
       <h4 class="section-header">System Information</h4>
       <div class="profile-grid">
         <div class="profile-card">
@@ -589,6 +438,194 @@
           <i class="fas fa-plug"></i> Reconnect WS
         </button>
       </div>
+    </div>
+
+    {{!-- ═══ FEATURES TAB ═══ --}}
+    <div class="tab" data-tab="features" data-group="primary">
+      <h4 class="section-header"><i class="fas fa-server"></i> Backend Connection</h4>
+      <div class="form-group">
+        <label for="ai-gm-server-url">Backend Server URL</label>
+        <input type="text" id="ai-gm-server-url" value="{{serverUrl}}" placeholder="http://localhost:8080" />
+        <p class="hint">URL of the AI Game Master backend server.</p>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary btn-block" data-action="save-server-url">
+          <i class="fas fa-save"></i> Save URL
+        </button>
+      </div>
+
+      <h4 class="section-header"><i class="fas fa-toggle-on"></i> Feature Toggles</h4>
+      <div class="features-toggle-list">
+        <label class="feature-toggle-item">
+          <input type="checkbox" id="ai-gm-enable-transcription" {{#if enableTranscription}}checked{{/if}}>
+          <span class="feature-toggle-label">
+            <i class="fas fa-microphone"></i>
+            <strong>Enable Voice Transcription</strong>
+            <span class="hint">Allow microphone capture during adventure sessions.</span>
+          </span>
+        </label>
+        <label class="feature-toggle-item">
+          <input type="checkbox" id="ai-gm-enable-game-director" {{#if enableGameDirector}}checked{{/if}}>
+          <span class="feature-toggle-label">
+            <i class="fas fa-dragon"></i>
+            <strong>Enable Game Director</strong>
+            <span class="hint">Enable the AI Game Director for real-time adventure narration.</span>
+          </span>
+        </label>
+      </div>
+
+      {{!-- Adventure Director (shown only when Game Director is enabled) --}}
+      {{#if enableGameDirector}}
+      <h4 class="section-header" style="margin-top:1rem;">Adventure Director</h4>
+      <p class="hint">Carrega una aventura, inicia una sessió i deixa que el director narri en temps real.</p>
+
+      <div class="form-group">
+        <label for="adventure-select">Aventura</label>
+        <select id="adventure-select" {{#if adventureSessionActive}}disabled{{/if}}>
+          <option value="">— Selecciona una aventura —</option>
+          {{#each adventures}}
+            <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.title}} ({{this.system}})</option>
+          {{/each}}
+        </select>
+      </div>
+
+      <div class="form-group" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button type="button" class="btn" data-action="upload-adventure" {{#if adventureSessionActive}}disabled{{/if}}>
+          <i class="fas fa-upload"></i> Pujar PDF d'aventura
+        </button>
+        {{#unless adventureSessionActive}}
+          <button type="button" class="btn btn-primary" data-action="start-adventure" {{#unless adventureSelected}}disabled{{/unless}}>
+            <i class="fas fa-play"></i> Iniciar aventura
+          </button>
+        {{/unless}}
+        {{#if adventureSessionActive}}
+          <button type="button" class="btn" data-action="end-adventure">
+            <i class="fas fa-stop"></i> Finalitzar
+          </button>
+        {{/if}}
+      </div>
+
+      {{#if adventureSelected}}
+        {{#unless adventureSessionActive}}
+        {{#if adventureSavedSessions.length}}
+          <div class="adventure-history" style="margin-top:8px;">
+            <h5 class="section-header">Sessions anteriors</h5>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              {{#each adventureSavedSessions}}
+                <div style="border:1px solid var(--color-border-light-tertiary);border-radius:6px;padding:8px;background:var(--color-bg-option);">
+                  <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+                    <div style="min-width:0;flex:1;">
+                      <strong>{{this.sessionName}}</strong>
+                      {{#if this.currentSceneTitle}}
+                        <div class="hint">Escena actual: {{this.currentSceneTitle}}</div>
+                      {{/if}}
+                      {{#if this.participantNamesText}}
+                        <div class="hint">Jugadors: {{this.participantNamesText}}</div>
+                      {{/if}}
+                      {{#if this.sessionSummary}}
+                        <div style="margin-top:4px;white-space:pre-wrap;">{{this.sessionSummary}}</div>
+                      {{/if}}
+                      <div class="hint" style="margin-top:4px;">
+                        Tensió: {{this.tensionLevel}} / 10
+                        {{#if this.updatedAtLabel}} · Actualitzada: {{this.updatedAtLabel}}{{/if}}
+                      </div>
+                    </div>
+                    <button type="button" class="btn" data-action="resume-adventure" data-session-id="{{this.id}}">
+                      <i class="fas fa-rotate-left"></i> Reprendre
+                    </button>
+                  </div>
+                </div>
+              {{/each}}
+            </div>
+          </div>
+        {{/if}}
+        {{/unless}}
+      {{/if}}
+
+      {{#if adventureSessionActive}}
+        <div class="adventure-session" style="border:1px solid var(--color-border-light-tertiary);padding:8px;border-radius:6px;margin-top:8px;">
+          {{#if adventureSessionName}}
+            <h4 class="section-header">{{adventureSessionName}}</h4>
+          {{/if}}
+          {{#if adventureSessionParticipants.length}}
+            <div class="hint" style="margin-bottom:6px;">Jugadors: {{#each adventureSessionParticipants}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</div>
+          {{/if}}
+          {{#if adventureSessionSummary}}
+            <div style="margin-bottom:8px;padding:6px 8px;background:var(--color-bg-option);border-radius:4px;white-space:pre-wrap;">{{adventureSessionSummary}}</div>
+          {{/if}}
+          {{#if adventureScene}}
+            <h4 class="section-header">{{adventureScene.title}}</h4>
+            <div class="read-aloud" style="font-style:italic;white-space:pre-wrap;border-left:3px solid var(--color-text-hyperlink);padding:6px 10px;margin-bottom:8px;">{{adventureScene.readAloudText}}</div>
+          {{/if}}
+
+          <div class="adventure-status" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div>
+              <strong>Pistes descobertes</strong>
+              <ul style="margin:4px 0 0 1rem;padding:0;">
+                {{#each discoveredClues}}<li>{{this}}</li>{{else}}<li class="hint">cap encara</li>{{/each}}
+              </ul>
+            </div>
+            <div>
+              <strong>NPCs trobats</strong>
+              <ul style="margin:4px 0 0 1rem;padding:0;">
+                {{#each metNpcs}}<li>{{this}}</li>{{else}}<li class="hint">cap encara</li>{{/each}}
+              </ul>
+            </div>
+          </div>
+
+          {{#if adventureNpcs.length}}
+          <div style="margin-bottom:8px;">
+            <strong><i class="fas fa-users"></i> NPCs de l'aventura</strong>
+            <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px;">
+              {{#each adventureNpcs}}
+              <div style="display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;background:var(--color-bg-option);">
+                <i class="fas fa-user" style="opacity:0.6;"></i>
+                <span style="flex:1;font-size:0.9em;">
+                  <strong>{{this.name}}</strong>
+                  {{#if this.currentDisposition}}<span class="hint">({{this.currentDisposition}})</span>{{/if}}
+                </span>
+                <button type="button" class="btn btn-sm" data-action="create-adventure-npc" data-npc-id="{{this.id}}" title="Crear actor a Foundry">
+                  <i class="fas fa-user-plus"></i>
+                </button>
+              </div>
+              {{/each}}
+            </div>
+          </div>
+          {{/if}}
+
+          <div class="tension" style="margin-bottom:8px;">
+            <label><strong>Tensió</strong> {{tensionLevel}} / {{tensionMax}}</label>
+            <div style="background:var(--color-bg-option);height:10px;border-radius:5px;overflow:hidden;border:1px solid var(--color-border-dark-tertiary);">
+              <div style="height:100%;width:{{tensionPct}}%;background:linear-gradient(90deg,#4caf50,#ff9800,#f44336);"></div>
+            </div>
+          </div>
+
+          {{#if speakingNpc}}
+            <div class="npc-speaking" style="background:var(--color-bg-option);padding:6px 8px;border-radius:4px;margin-bottom:8px;">
+              <i class="fas fa-volume-up"></i> <strong>{{speakingNpc.npcName}}</strong> està parlant…
+            </div>
+          {{/if}}
+
+          <div class="form-group" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            {{#if enableTranscription}}
+            <button type="button" class="btn {{#if isRecording}}btn-danger{{/if}}" data-action="toggle-mic" style="flex-shrink:0;">
+              <i class="fas fa-microphone{{#if isRecording}}-slash{{/if}}"></i>
+            </button>
+            {{/if}}
+            <input type="text" id="adventure-text-input" placeholder="Escriu la teva acció…" style="flex:1;min-width:120px;" {{#if isProcessing}}disabled{{/if}} />
+            <button type="button" class="btn" data-action="send-adventure-text" style="flex-shrink:0;" {{#if isProcessing}}disabled{{/if}}>
+              <i class="fas fa-paper-plane"></i>
+            </button>
+            {{#if isProcessing}}<span class="hint" style="width:100%;"><i class="fas fa-spinner fa-spin"></i> Processant…</span>{{/if}}
+          </div>
+
+          <h5 class="section-header" style="margin-top:8px;">Registre</h5>
+          <div class="adventure-log" style="max-height:240px;overflow-y:auto;border:1px solid var(--color-border-light-tertiary);padding:6px;border-radius:4px;font-size:0.9em;">
+            {{#each adventureLog}}<div style="margin-bottom:4px;">{{this}}</div>{{else}}<div class="hint">Encara no hi ha res…</div>{{/each}}
+          </div>
+        </div>
+      {{/if}}
+      {{/if}}
     </div>
 
   </section>

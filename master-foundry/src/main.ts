@@ -11,12 +11,19 @@ import { SystemSnapshotSender } from './system-snapshot/snapshot-sender.js';
 import { PostProcessingEngine } from './system-snapshot/post-processor.js';
 import { AIGameMasterPanel } from './ui/ai-game-master-panel.js';
 import { SystemSkillRegistry } from './skills/system-skill.js';
-
-const SERVER = 'http://localhost:8080';
+import { registerSettings, getServerUrl } from './settings.js';
 
 /* ===================================================================== */
 /*  Ready hook – bootstrap everything                                     */
 /* ===================================================================== */
+
+Hooks.on('init', () => {
+    try {
+        registerSettings();
+    } catch (e) {
+        console.warn('[AI-GM] Settings registration failed:', e);
+    }
+});
 
 Hooks.on('ready', () => {
     console.log('[AI-GM] Initializing…');
@@ -27,21 +34,6 @@ Hooks.on('ready', () => {
     let postProcessor: PostProcessingEngine | null = null;
     let panel: AIGameMasterPanel | null = null;
     let skillRegistry: SystemSkillRegistry | null = null;
-
-    try {
-        // Register settings (safe to call multiple times in same session)
-        if (!game.settings.settings.has('ai-gm.defaultItemPack')) {
-            game.settings.register('ai-gm', 'defaultItemPack', {
-                name: 'Default Item Pack',
-                scope: 'world',
-                config: false,
-                type: String,
-                default: ''
-            });
-        }
-    } catch (e) {
-        console.warn('[AI-GM] Settings registration failed (may already exist):', e);
-    }
 
     // ── Skill Registry — per-system declarative adapters ──
     try {
@@ -59,13 +51,13 @@ Hooks.on('ready', () => {
     }
 
     try {
-        wsClient = new WebSocketClient(SERVER);
+        wsClient = new WebSocketClient(getServerUrl());
     } catch (e) {
         console.error('[AI-GM] WebSocketClient init failed:', e);
     }
 
     try {
-        snapshotSender = new SystemSnapshotSender(SERVER);
+        snapshotSender = new SystemSnapshotSender(getServerUrl());
     } catch (e) {
         console.error('[AI-GM] SnapshotSender init failed:', e);
     }
@@ -179,21 +171,26 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
 
     // v13+/v14: controls is a Record<string, SceneControl> (object with named keys)
     if (controls && typeof controls === 'object' && !Array.isArray(controls)) {
-        const tokenGroup = controls.tokens || controls.token;
-        if (tokenGroup?.tools) {
-            if (!tokenGroup.tools['ai-gm-open']) {
-                tokenGroup.tools['ai-gm-open'] = {
-                    name: 'ai-gm-open',
-                    title: 'AI Game Master',
-                    icon: 'fa-solid fa-hat-wizard',
-                    button: true,
-                    visible: game.user.isGM,
-                    onChange: () => {
-                        try { game.aiGM?.open(); }
-                        catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
+        if (!controls['ai-gm']) {
+            controls['ai-gm'] = {
+                name: 'ai-gm',
+                title: 'AI Game Master',
+                icon: 'fa-solid fa-hat-wizard',
+                visible: game.user.isGM,
+                tools: {
+                    'ai-gm-open': {
+                        name: 'ai-gm-open',
+                        title: 'Open Panel',
+                        icon: 'fa-solid fa-door-open',
+                        button: true,
+                        visible: game.user.isGM,
+                        onChange: () => {
+                            try { game.aiGM?.open(); }
+                            catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
+                        }
                     }
-                };
-            }
+                }
+            };
         }
         return;
     }
@@ -201,32 +198,22 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
     // v11/v12: controls is an Array
     if (!Array.isArray(controls)) return;
 
-    const aiTool = {
-        name: 'ai-gm-open',
-        title: 'AI Game Master',
-        icon: 'fas fa-hat-wizard',
-        button: true,
-        onClick: () => {
-            try { game.aiGM?.open(); }
-            catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
-        }
-    };
-
-    const tokenGroup = controls.find((c: any) => c.name === 'token' || c.name === 'tokens');
-    if (tokenGroup?.tools) {
-        if (!tokenGroup.tools.find((t: any) => t.name === 'ai-gm-open')) {
-            tokenGroup.tools.push(aiTool);
-        }
-        return;
-    }
-
     if (!controls.find((c: any) => c.name === 'ai-gm')) {
         controls.push({
             name: 'ai-gm',
             title: 'AI Game Master',
             icon: 'fas fa-hat-wizard',
             visible: true,
-            tools: [aiTool],
+            tools: [{
+                name: 'ai-gm-open',
+                title: 'Open Panel',
+                icon: 'fas fa-door-open',
+                button: true,
+                onClick: () => {
+                    try { game.aiGM?.open(); }
+                    catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
+                }
+            }],
             activeTool: 'ai-gm-open'
         });
     }
@@ -288,7 +275,7 @@ Hooks.on('getActorDirectoryEntryContext', (_appOrHtml: any, options: any[]) => {
                     items: actor.items.map((i: any) => i.toObject()),
                 };
 
-                const res = await fetch(`${SERVER}/gm/character/reference`, {
+                const res = await fetch(`${getServerUrl()}/gm/character/reference`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -320,7 +307,7 @@ Hooks.on('getActorDirectoryEntryContext', (_appOrHtml: any, options: any[]) => {
             const actor = game.actors.get(getDocId(li));
             if (!actor) return;
             try {
-                const res = await fetch(`${SERVER}/gm/character/explain`, {
+                const res = await fetch(`${getServerUrl()}/gm/character/explain`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

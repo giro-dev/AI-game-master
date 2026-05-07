@@ -553,3 +553,53 @@
   margin: 0;
   font-size: 0.75rem;
 }
+
+/* ─── Features Tab — Toggle List ───────────────────────────────────── */
+
+.ai-gm-panel .features-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.ai-gm-panel .feature-toggle-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.ai-gm-panel .feature-toggle-item:hover {
+  background: rgba(155, 89, 182, 0.06);
+  border-color: rgba(155, 89, 182, 0.35);
+}
+
+.ai-gm-panel .feature-toggle-item input[type="checkbox"] {
+  width: auto;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.ai-gm-panel .feature-toggle-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.85rem;
+}
+
+.ai-gm-panel .feature-toggle-label i {
+  margin-right: 0.35rem;
+  color: #7b2fb5;
+}
+
+.ai-gm-panel .feature-toggle-label .hint {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
