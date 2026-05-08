@@ -1,0 +1,34 @@
+---
+description: Rules for Java/Spring Boot backend code in master-server
+globs: master-server/**/*.java, master-server/**/*.yml
+alwaysApply: false
+---
+
+# Backend Rules (master-server)
+
+## Stack
+- Java 21, Spring Boot 3.5, Spring AI 1.1, Gradle
+- PostgreSQL 17, OpenSearch 2.19, Lombok
+
+## Patterns
+- Use Lombok: @Data, @Builder, @Getter, @Setter, @AllArgsConstructor, @NoArgsConstructor
+- Controllers: @RestController, map to /api/*
+- Services: @Service, inject via constructor (Lombok @RequiredArgsConstructor)
+- Config: @Configuration + @ConfigurationProperties(prefix = "...")
+- DTOs: prefer Java records for immutable data
+- LLM interaction: use Spring AI ChatClient and Advisor APIs
+- Model routing: configured per-operation in application.yml under game-master.routing.operations
+
+## Prompt Templates
+- Location: src/main/resources/prompts/*.txt
+- Syntax: {variableName} placeholders
+- Always request JSON output with explicit schema for structured responses
+- Prompts are multilingual (default Catalan, configurable)
+
+## Configuration
+- Centralized in application.yml
+- Semantic prefixes: game-master.*, whisper.*, piper-tts.*, tts.*, audio.*, adventure.*
+- Docker Compose auto-starts with Spring Boot
+
+## Security
+- Never hardcode API keys; use env vars: OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, GM-PROJECT
