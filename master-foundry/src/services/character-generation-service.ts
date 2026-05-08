@@ -30,10 +30,14 @@ interface RequestParams {
 }
 
 export class CharacterGenerationService {
-    private readonly apiBaseUrl: string;
+    private readonly _getApiUrl: () => string;
 
-    constructor(apiBaseUrl: string = 'http://localhost:8080') {
-        this.apiBaseUrl = apiBaseUrl;
+    constructor(apiBaseUrl: string | (() => string) = 'http://localhost:8080') {
+        this._getApiUrl = typeof apiBaseUrl === 'function' ? apiBaseUrl : () => apiBaseUrl;
+    }
+
+    private get apiBaseUrl(): string {
+        return this._getApiUrl();
     }
 
     /**

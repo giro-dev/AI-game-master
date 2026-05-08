@@ -9,16 +9,26 @@ import { BlueprintGenerator } from './blueprints/blueprint-generator.js';
 import { WebSocketClient } from './websocket-client.js';
 import { SystemSnapshotSender } from './system-snapshot/snapshot-sender.js';
 import { PostProcessingEngine } from './system-snapshot/post-processor.js';
-import { AIGameMasterPanel } from './ui/ai-game-master-panel.js';
+import { GenerateApplication } from './ui/generate-application.js';
+import { SessionApplication } from './ui/session-application.js';
+import { LibraryApplication } from './ui/library-application.js';
+import { ConfigApplication } from './ui/config-application.js';
+import { FeaturesApplication } from './ui/features-application.js';
+import { TranscriptionApplication } from './ui/transcription-application.js';
 import { SystemSkillRegistry } from './skills/system-skill.js';
-import { CharacterTemplateService } from './services/character-template-service.js';
-import { CreationWizardService } from './services/creation-wizard-service.js';
-
-const SERVER = 'http://localhost:8080';
+import { registerSettings, getServerUrl } from './settings.js';
 
 /* ===================================================================== */
 /*  Ready hook – bootstrap everything                                     */
 /* ===================================================================== */
+
+Hooks.on('init', () => {
+    try {
+        registerSettings();
+    } catch (e) {
+        console.warn('[AI-GM] Settings registration failed:', e);
+    }
+});
 
 Hooks.on('ready', () => {
     console.log('[AI-GM] Initializing…');
@@ -27,25 +37,15 @@ Hooks.on('ready', () => {
     let wsClient: WebSocketClient | null = null;
     let snapshotSender: SystemSnapshotSender | null = null;
     let postProcessor: PostProcessingEngine | null = null;
-    let panel: AIGameMasterPanel | null = null;
     let skillRegistry: SystemSkillRegistry | null = null;
-    let templateService: CharacterTemplateService | null = null;
-    let wizardService: CreationWizardService | null = null;
 
-    try {
-        // Register settings (safe to call multiple times in same session)
-        if (!game.settings.settings.has('ai-gm.defaultItemPack')) {
-            game.settings.register('ai-gm', 'defaultItemPack', {
-                name: 'Default Item Pack',
-                scope: 'world',
-                config: false,
-                type: String,
-                default: ''
-            });
-        }
-    } catch (e) {
-        console.warn('[AI-GM] Settings registration failed (may already exist):', e);
-    }
+    // ── Per-feature standalone popup Applications ──
+    let generateApp: GenerateApplication | null = null;
+    let sessionApp: SessionApplication | null = null;
+    let libraryApp: LibraryApplication | null = null;
+    let configApp: ConfigApplication | null = null;
+    let featuresApp: FeaturesApplication | null = null;
+    let transcriptionApp: TranscriptionApplication | null = null;
 
     // ── Skill Registry — per-system declarative adapters ──
     try {
@@ -53,21 +53,6 @@ Hooks.on('ready', () => {
         skillRegistry.init(game.system.id, game.world?.id ?? '');
     } catch (e) {
         console.error('[AI-GM] SkillRegistry init failed:', e);
-    }
-
-    // ── Template Service — save/load character presets ──
-    try {
-        templateService = new CharacterTemplateService();
-        templateService.init();
-    } catch (e) {
-        console.error('[AI-GM] TemplateService init failed:', e);
-    }
-
-    // ── Creation Wizard — step-by-step guided creation ──
-    try {
-        wizardService = new CreationWizardService();
-    } catch (e) {
-        console.error('[AI-GM] WizardService init failed:', e);
     }
 
     try {
@@ -78,23 +63,30 @@ Hooks.on('ready', () => {
     }
 
     try {
-        wsClient = new WebSocketClient(SERVER);
+        wsClient = new WebSocketClient(getServerUrl());
     } catch (e) {
         console.error('[AI-GM] WebSocketClient init failed:', e);
     }
 
     try {
-        snapshotSender = new SystemSnapshotSender(SERVER);
+        snapshotSender = new SystemSnapshotSender(getServerUrl());
     } catch (e) {
         console.error('[AI-GM] SnapshotSender init failed:', e);
     }
 
     postProcessor = new PostProcessingEngine();
 
-    try {
-        panel = new AIGameMasterPanel();
-    } catch (e) {
-        console.error('[AI-GM] Panel init failed:', e);
+    // ── Instantiate standalone popup apps ──
+    try { generateApp = new GenerateApplication(); } catch (e) { console.error('[AI-GM] GenerateApplication init failed:', e); }
+    try { sessionApp = new SessionApplication(); } catch (e) { console.error('[AI-GM] SessionApplication init failed:', e); }
+    try { libraryApp = new LibraryApplication(); } catch (e) { console.error('[AI-GM] LibraryApplication init failed:', e); }
+    try { configApp = new ConfigApplication(); } catch (e) { console.error('[AI-GM] ConfigApplication init failed:', e); }
+    try { featuresApp = new FeaturesApplication(); } catch (e) { console.error('[AI-GM] FeaturesApplication init failed:', e); }
+    try { transcriptionApp = new TranscriptionApplication(); } catch (e) { console.error('[AI-GM] TranscriptionApplication init failed:', e); }
+
+    // Wire the session panel into the features app for world-state collection
+    if (featuresApp && sessionApp) {
+        featuresApp.setSessionPanel(sessionApp.getPanel());
     }
 
     // ── Always expose on game.aiGM so the button never silently fails ──
@@ -104,12 +96,26 @@ Hooks.on('ready', () => {
         snapshotSender,
         postProcessor,
         skillRegistry,
-        templateService,
-        wizardService,
-        panel,
-        open(): void {
-            if (panel) {
-                panel.render(true);
+        // Individual popup apps
+        generateApp,
+        sessionApp,
+        libraryApp,
+        configApp,
+        featuresApp,
+        transcriptionApp,
+        /** Legacy entry-point: open the popup that matches the given tab name. */
+        open(tab: string = 'generator'): void {
+            const mapping: Record<string, any> = {
+                generator:      generateApp,
+                chat:           sessionApp,
+                library:        libraryApp,
+                configuration:  configApp,
+                'game-director': featuresApp,
+                transcription:  transcriptionApp,
+            };
+            const app = mapping[tab] ?? generateApp;
+            if (app) {
+                app.render(true);
             } else {
                 ui.notifications?.error('AI Game Master panel failed to initialize. Check the console.');
             }
@@ -198,23 +204,77 @@ Hooks.on('ready', () => {
 Hooks.on('getSceneControlButtons', (controls: any) => {
     if (!game.user?.isGM) return;
 
+    const openApp = (app: any, fallbackTab?: string): void => {
+        try {
+            if (app) {
+                app.render(true);
+            } else if (fallbackTab) {
+                game.aiGM?.open(fallbackTab);
+            }
+        } catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
+    };
+
+    const objectTools = {
+        'ai-gm-generator': {
+            name: 'ai-gm-generator',
+            title: 'Generator',
+            icon: 'fa-solid fa-magic',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openApp(game.aiGM?.generateApp)
+        },
+        'ai-gm-chat': {
+            name: 'ai-gm-chat',
+            title: 'Chat',
+            icon: 'fa-solid fa-comments',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openApp(game.aiGM?.sessionApp)
+        },
+        'ai-gm-library': {
+            name: 'ai-gm-library',
+            title: 'Library',
+            icon: 'fa-solid fa-book',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openApp(game.aiGM?.libraryApp)
+        },
+        'ai-gm-configuration': {
+            name: 'ai-gm-configuration',
+            title: 'Configuration',
+            icon: 'fa-solid fa-cogs',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openApp(game.aiGM?.configApp)
+        },
+        'ai-gm-game-director': {
+            name: 'ai-gm-game-director',
+            title: 'Game Director',
+            icon: 'fa-solid fa-dragon',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openApp(game.aiGM?.featuresApp)
+        },
+        'ai-gm-transcription': {
+            name: 'ai-gm-transcription',
+            title: 'Transcription',
+            icon: 'fa-solid fa-microphone',
+            button: true,
+            visible: game.user.isGM,
+            onChange: () => openApp(game.aiGM?.transcriptionApp)
+        },
+    };
+
     // v13+/v14: controls is a Record<string, SceneControl> (object with named keys)
     if (controls && typeof controls === 'object' && !Array.isArray(controls)) {
-        const tokenGroup = controls.tokens || controls.token;
-        if (tokenGroup?.tools) {
-            if (!tokenGroup.tools['ai-gm-open']) {
-                tokenGroup.tools['ai-gm-open'] = {
-                    name: 'ai-gm-open',
-                    title: 'AI Game Master',
-                    icon: 'fa-solid fa-hat-wizard',
-                    button: true,
-                    visible: game.user.isGM,
-                    onChange: () => {
-                        try { game.aiGM?.open(); }
-                        catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
-                    }
-                };
-            }
+        if (!controls['ai-gm']) {
+            controls['ai-gm'] = {
+                name: 'ai-gm',
+                title: 'AI Game Master',
+                icon: 'fa-solid fa-hat-wizard',
+                visible: game.user.isGM,
+                tools: objectTools
+            };
         }
         return;
     }
@@ -222,33 +282,57 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
     // v11/v12: controls is an Array
     if (!Array.isArray(controls)) return;
 
-    const aiTool = {
-        name: 'ai-gm-open',
-        title: 'AI Game Master',
-        icon: 'fas fa-hat-wizard',
-        button: true,
-        onClick: () => {
-            try { game.aiGM?.open(); }
-            catch (e) { console.error('[AI-GM] Failed to open panel:', e); }
-        }
-    };
-
-    const tokenGroup = controls.find((c: any) => c.name === 'token' || c.name === 'tokens');
-    if (tokenGroup?.tools) {
-        if (!tokenGroup.tools.find((t: any) => t.name === 'ai-gm-open')) {
-            tokenGroup.tools.push(aiTool);
-        }
-        return;
-    }
-
     if (!controls.find((c: any) => c.name === 'ai-gm')) {
         controls.push({
             name: 'ai-gm',
             title: 'AI Game Master',
             icon: 'fas fa-hat-wizard',
             visible: true,
-            tools: [aiTool],
-            activeTool: 'ai-gm-open'
+            tools: [
+                {
+                    name: 'ai-gm-generator',
+                    title: 'Generator',
+                    icon: 'fas fa-magic',
+                    button: true,
+                    onClick: () => openApp(game.aiGM?.generateApp)
+                },
+                {
+                    name: 'ai-gm-chat',
+                    title: 'Chat',
+                    icon: 'fas fa-comments',
+                    button: true,
+                    onClick: () => openApp(game.aiGM?.sessionApp)
+                },
+                {
+                    name: 'ai-gm-library',
+                    title: 'Library',
+                    icon: 'fas fa-book',
+                    button: true,
+                    onClick: () => openApp(game.aiGM?.libraryApp)
+                },
+                {
+                    name: 'ai-gm-configuration',
+                    title: 'Configuration',
+                    icon: 'fas fa-cogs',
+                    button: true,
+                    onClick: () => openApp(game.aiGM?.configApp)
+                },
+                {
+                    name: 'ai-gm-game-director',
+                    title: 'Game Director',
+                    icon: 'fas fa-dragon',
+                    button: true,
+                    onClick: () => openApp(game.aiGM?.featuresApp)
+                },
+                {
+                    name: 'ai-gm-transcription',
+                    title: 'Transcription',
+                    icon: 'fas fa-microphone',
+                    button: true,
+                    onClick: () => openApp(game.aiGM?.transcriptionApp)
+                }
+            ],
+            activeTool: 'ai-gm-generator'
         });
     }
 });
@@ -267,7 +351,7 @@ Hooks.on('chatMessage', (_chatlog: any, message: string) => {
 
 Hooks.on('createChatMessage', (message: any) => {
     try {
-        void game.aiGM?.panel?.handleAdventureChatMessage?.(message);
+        void game.aiGM?.featuresApp?.handleAdventureChatMessage?.(message);
     } catch (e) {
         console.warn('[AI-GM] Failed to process chat message for adventure rolls:', e);
     }
@@ -309,7 +393,7 @@ Hooks.on('getActorDirectoryEntryContext', (_appOrHtml: any, options: any[]) => {
                     items: actor.items.map((i: any) => i.toObject()),
                 };
 
-                const res = await fetch(`${SERVER}/gm/character/reference`, {
+                const res = await fetch(`${getServerUrl()}/gm/character/reference`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -322,6 +406,8 @@ Hooks.on('getActorDirectoryEntryContext', (_appOrHtml: any, options: any[]) => {
                     `Future AI-generated characters will replicate this character's structure.`
                 );
                 console.log('[AI-GM] Reference character stored:', actor.name, payload);
+                // Refresh the config popup if it is open
+                game.aiGM?.configApp?.render(false);
             } catch (e: any) {
                 console.error('[AI-GM] Reference character capture failed:', e);
                 ui.notifications?.error(`Failed to store reference character: ${e.message}`);
@@ -341,7 +427,7 @@ Hooks.on('getActorDirectoryEntryContext', (_appOrHtml: any, options: any[]) => {
             const actor = game.actors.get(getDocId(li));
             if (!actor) return;
             try {
-                const res = await fetch(`${SERVER}/gm/character/explain`, {
+                const res = await fetch(`${getServerUrl()}/gm/character/explain`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

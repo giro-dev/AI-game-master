@@ -1,0 +1,144 @@
+<div class="ai-gm-panel">
+  <h4 class="section-header">System Information</h4>
+  <div class="profile-grid">
+    <div class="profile-card">
+      <h5>Game System</h5>
+      <div class="value">{{systemTitle}} ({{systemId}})</div>
+    </div>
+    <div class="profile-card">
+      <h5>Foundry Version</h5>
+      <div class="value">{{foundryVersion}}</div>
+    </div>
+    <div class="profile-card">
+      <h5>Actor Types</h5>
+      <ul>{{#each actorTypeNames}}<li>{{this}}</li>{{/each}}</ul>
+    </div>
+    <div class="profile-card">
+      <h5>Item Types</h5>
+      <ul>{{#each itemTypeNames}}<li>{{this}}</li>{{/each}}</ul>
+    </div>
+  </div>
+  <h4 class="section-header">AI Knowledge Profile</h4>
+  {{#if profile}}
+  <div class="profile-grid">
+    <div class="profile-card">
+      <h5>Status</h5>
+      <span class="status-badge learned">Learned</span>
+      {{#if profile.enrichedFromManuals}}<span class="status-badge connected" style="margin-left:4px;">Manual-enriched</span>{{/if}}
+    </div>
+    <div class="profile-card">
+      <h5>Field Groups</h5>
+      <div class="value">{{profile.fieldGroups.length}} groups</div>
+    </div>
+    {{#if profile.characterCreationSteps.length}}
+    <div class="profile-card" style="grid-column: 1 / -1;">
+      <h5>Character Creation Steps</h5>
+      <ol style="margin:0; padding-left:1.2rem; font-size:0.8rem;">
+        {{#each profile.characterCreationSteps}}<li>{{this}}</li>{{/each}}
+      </ol>
+    </div>
+    {{/if}}
+    {{#if profile.detectedConstraints.length}}
+    <div class="profile-card" style="grid-column: 1 / -1;">
+      <h5>Detected Constraints</h5>
+      <ul>{{#each profile.detectedConstraints}}<li>{{this.description}}</li>{{/each}}</ul>
+    </div>
+    {{/if}}
+  </div>
+  {{else}}
+  <p class="empty-state">No system profile yet. The AI will learn the system on first use.</p>
+  {{/if}}
+  <h4 class="section-header">Reference Character</h4>
+  {{#if referenceCharacter}}
+  <div class="profile-grid">
+    <div class="profile-card" style="grid-column: 1 / -1;">
+      <h5><i class="fas fa-user-check"></i> {{referenceCharacter.label}}</h5>
+      <div class="value" style="font-size:0.8rem;">
+        Type: <strong>{{referenceCharacter.actorType}}</strong>
+        &nbsp;Items: <strong>{{referenceCharacter.itemCount}}</strong>
+        {{#if referenceCharacter.capturedAt}}&nbsp;Captured: {{referenceCharacter.capturedAt}}{{/if}}
+      </div>
+      <p class="hint" style="margin-top:4px;">AI-generated characters of this type will replicate this character's exact structure.</p>
+    </div>
+  </div>
+  <div class="btn-row" style="margin-top: 0.5rem;">
+    <button type="button" class="btn btn-block btn-danger" data-action="clear-reference">
+      <i class="fas fa-trash"></i> Clear Reference Character
+    </button>
+  </div>
+  {{else}}
+  <p class="empty-state">No reference character set. Right-click an actor in the sidebar → <em>"AI: Use as Reference Character"</em> to capture a manually-created character as the structural template.</p>
+  {{/if}}
+  <div class="profile-grid" style="margin-top:0.75rem;">
+    <div class="profile-card" style="grid-column: 1 / -1;">
+      <h5>Set from world actor</h5>
+      <div class="form-group" style="margin-bottom:0.5rem;">
+        <label for="ai-gm-reference-actor">Actor</label>
+        <select id="ai-gm-reference-actor">
+          <option value="">— Select an actor —</option>
+          {{#each availableReferenceActors}}
+          <option value="{{this.id}}">{{this.name}} ({{this.type}} · {{this.itemCount}} items)</option>
+          {{/each}}
+        </select>
+      </div>
+      <button type="button" class="btn btn-block" data-action="set-reference-character">
+        <i class="fas fa-user-check"></i> Use selected actor as reference
+      </button>
+    </div>
+  </div>
+  <h4 class="section-header">System Skills</h4>
+  <p class="hint">Skills are per-system adapters that fine-tune schema extraction and AI generation.</p>
+  <div class="skill-list" id="gm-skill-list">
+    {{#each skills}}
+    <div class="skill-entry {{#unless this.enabled}}skill-disabled{{/unless}}" data-skill-id="{{this.id}}">
+      <div class="skill-info">
+        <strong>{{this.name}}</strong>
+        <span class="skill-meta">{{this.systemId}}{{#if this.worldId}} / {{this.worldId}}{{/if}}</span>
+        {{#if this.description}}<p class="hint" style="margin:2px 0 0;">{{this.description}}</p>{{/if}}
+      </div>
+      <div class="skill-actions">
+        <button type="button" class="btn btn-sm" data-action="toggle-skill" data-skill-id="{{this.id}}" title="{{#if this.enabled}}Disable{{else}}Enable{{/if}}">
+          <i class="fas {{#if this.enabled}}fa-toggle-on{{else}}fa-toggle-off{{/if}}"></i>
+        </button>
+        <button type="button" class="btn btn-sm" data-action="edit-skill" data-skill-id="{{this.id}}" title="Edit JSON">
+          <i class="fas fa-edit"></i>
+        </button>
+        <button type="button" class="btn btn-sm btn-danger" data-action="delete-skill" data-skill-id="{{this.id}}" title="Remove">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    </div>
+    {{/each}}
+    {{#unless skills.length}}
+    <p class="empty-state">No skills loaded. Import a JSON skill file or create one.</p>
+    {{/unless}}
+  </div>
+  <div class="btn-row" style="margin-top: 0.5rem;">
+    <button type="button" class="btn" data-action="import-skill"><i class="fas fa-file-import"></i> Import Skill</button>
+    <button type="button" class="btn" data-action="create-skill"><i class="fas fa-plus"></i> New Skill</button>
+    <button type="button" class="btn" data-action="export-skills"><i class="fas fa-file-export"></i> Export All</button>
+  </div>
+  <h4 class="section-header">Connection</h4>
+  <div class="profile-grid">
+    <div class="profile-card">
+      <h5>WebSocket</h5>
+      {{#if wsConnected}}
+      <span class="status-badge connected">Connected</span>
+      {{else}}
+      <span class="status-badge disconnected">Disconnected</span>
+      {{/if}}
+    </div>
+    <div class="profile-card">
+      <h5>Server</h5>
+      <div class="value" style="font-size:0.8rem;">{{serverUrl}}</div>
+    </div>
+  </div>
+  <div class="btn-row" style="margin-top: 1rem;">
+    <button type="button" class="btn btn-block" data-action="relearn-system">
+      <i class="fas fa-sync-alt"></i> Re-learn System
+    </button>
+    <button type="button" class="btn btn-block" data-action="reconnect-ws">
+      <i class="fas fa-plug"></i> Reconnect WS
+    </button>
+  </div>
+</div>
