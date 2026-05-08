@@ -6,7 +6,14 @@
  */
 
 import type { SystemSkill } from '../skills/system-skill.js';
-import { getServerUrl } from '../settings.js';
+import {
+    getServerUrl, isTranscriptionEnabled, isGameDirectorEnabled,
+    MODULE_ID, DEFAULT_SERVER_URL,
+    getAllowedRoles, setAllowedRoles,
+    ROLE_PLAYER, ROLE_TRUSTED, ROLE_ASSISTANT, ROLE_GAMEMASTER,
+    ALL_CHUNK_TYPES, CHUNK_TYPE_LABELS, getRagChunkTypesByRole, setRagChunkTypesByRole,
+    type FeatureKey, type ChunkType
+} from '../settings.js';
 import { escapeHtml, type PanelContext } from './panel-utils.js';
 
 export class ConfigPanel {
@@ -78,9 +85,69 @@ export class ConfigPanel {
             wsConnected: game.aiGM?.wsClient?.isConnected() ?? false,
             serverUrl: getServerUrl(),
 
+            // Feature flags
+            enableTranscription: isTranscriptionEnabled(),
+            enableGameDirector: isGameDirectorEnabled(),
+
             // Reference character
             referenceCharacter,
             availableReferenceActors,
+
+            // Role-based access
+            // roleAccessRows: one entry per feature, each with per-role checked state
+            roleAccessRows: (() => {
+                const roleList = [
+                    { value: ROLE_PLAYER,     label: 'Player' },
+                    { value: ROLE_TRUSTED,    label: 'Trusted Player' },
+                    { value: ROLE_ASSISTANT,  label: 'Assistant GM' },
+                    { value: ROLE_GAMEMASTER, label: 'Game Master' },
+                ];
+                const features: Array<{ key: FeatureKey; icon: string; label: string }> = [
+                    { key: 'generator',    icon: 'fa-magic',      label: 'Generator' },
+                    { key: 'chat',         icon: 'fa-comments',   label: 'Chat / Session' },
+                    { key: 'library',      icon: 'fa-book',       label: 'Library' },
+                    { key: 'gameDirector', icon: 'fa-dragon',     label: 'Game Director' },
+                    { key: 'transcription',icon: 'fa-microphone', label: 'Transcription' },
+                ];
+                return features.map(f => ({
+                    key: f.key,
+                    icon: f.icon,
+                    label: f.label,
+                    roles: roleList.map(r => ({
+                        value: r.value,
+                        label: r.label,
+                        isGM: r.value === ROLE_GAMEMASTER,
+                        checked: getAllowedRoles(f.key).includes(r.value),
+                    })),
+                }));
+            })(),
+            roleAccessHeaders: [
+                { label: 'Player' },
+                { label: 'Trusted Player' },
+                { label: 'Assistant GM' },
+                { label: 'Game Master' },
+            ],
+
+            // RAG chunk-type access per role
+            // ragChunkRows: one row per chunk type, columns = roles
+            ragChunkRows: (() => {
+                const roleList = [
+                    { value: ROLE_PLAYER,     label: 'Player' },
+                    { value: ROLE_TRUSTED,    label: 'Trusted Player' },
+                    { value: ROLE_ASSISTANT,  label: 'Assistant GM' },
+                    { value: ROLE_GAMEMASTER, label: 'Game Master' },
+                ];
+                const byRole = getRagChunkTypesByRole();
+                return (ALL_CHUNK_TYPES as readonly ChunkType[]).map(ct => ({
+                    chunkType: ct,
+                    label: CHUNK_TYPE_LABELS[ct],
+                    roles: roleList.map(r => ({
+                        value: r.value,
+                        isGM: r.value === ROLE_GAMEMASTER,
+                        checked: r.value === ROLE_GAMEMASTER || (byRole[r.value] ?? []).includes(ct),
+                    })),
+                }));
+            })(),
 
             // Skills
             skills: skills.map((s: SystemSkill) => ({
@@ -102,6 +169,62 @@ export class ConfigPanel {
         // Connection
         html.find('[data-action="relearn-system"]').on('click', this._onRelearnSystem.bind(this));
         html.find('[data-action="reconnect-ws"]').on('click', this._onReconnectWS.bind(this));
+
+        // Settings — server URL + feature toggles
+        html.find('[data-action="save-server-url"]').on('click', async () => {
+            const url = String(html.find('#ai-gm-server-url').val() || '').trim() || DEFAULT_SERVER_URL;
+            await game.settings.set(MODULE_ID, 'serverUrl', url);
+            ui.notifications?.info('Server URL saved.');
+            this.ctx.render(false);
+        });
+        html.find('#ai-gm-enable-transcription').on('change', async (ev: any) => {
+            await game.settings.set(MODULE_ID, 'enableTranscription', ev.target.checked);
+            this.ctx.render(false);
+        });
+        html.find('#ai-gm-enable-game-director').on('change', async (ev: any) => {
+            await game.settings.set(MODULE_ID, 'enableGameDirector', ev.target.checked);
+            this.ctx.render(false);
+        });
+
+        // Role-based access checkboxes
+        html.find('.ai-gm-role-checkbox').on('change', async (ev: any) => {
+            const checkbox = ev.currentTarget;
+            const feature = String(checkbox.dataset.feature ?? '') as FeatureKey;
+            const role = Number(checkbox.dataset.role ?? 0);
+            if (!feature) return;
+
+            // Collect all currently checked roles for this feature
+            const allChecked = html.find(`.ai-gm-role-checkbox[data-feature="${feature}"]:checked`);
+            const roles: number[] = [];
+            allChecked.each((_i: number, el: any) => roles.push(Number(el.dataset.role)));
+            // GM is always included; if user just unchecked a box for a non-GM role that's fine
+            // If they tried to uncheck GM, re-check it
+            if (role === ROLE_GAMEMASTER && !checkbox.checked) {
+                checkbox.checked = true;
+                ui.notifications?.warn('The Game Master role always has access and cannot be removed.');
+                return;
+            }
+            await setAllowedRoles(feature, roles);
+        });
+
+        // RAG chunk-type access checkboxes
+        html.find('.ai-gm-rag-chunk-checkbox').on('change', async (ev: any) => {
+            const checkbox = ev.currentTarget;
+            const chunkType = String(checkbox.dataset.chunkType ?? '') as ChunkType;
+            const role = Number(checkbox.dataset.role ?? 0);
+            if (!chunkType || role === ROLE_GAMEMASTER) return; // GM always has all types
+
+            const map = getRagChunkTypesByRole();
+            const current: ChunkType[] = map[role] ?? [];
+            if (checkbox.checked) {
+                if (!current.includes(chunkType)) current.push(chunkType);
+            } else {
+                const idx = current.indexOf(chunkType);
+                if (idx !== -1) current.splice(idx, 1);
+            }
+            map[role] = current;
+            await setRagChunkTypesByRole(map);
+        });
 
         // Reference character
         html.find('[data-action="clear-reference"]').on('click', this._onClearReference.bind(this));

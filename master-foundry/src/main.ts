@@ -16,7 +16,7 @@ import { ConfigApplication } from './ui/config-application.js';
 import { FeaturesApplication } from './ui/features-application.js';
 import { TranscriptionApplication } from './ui/transcription-application.js';
 import { SystemSkillRegistry } from './skills/system-skill.js';
-import { registerSettings, getServerUrl } from './settings.js';
+import { registerSettings, getServerUrl, canUserAccessFeature } from './settings.js';
 
 /* ===================================================================== */
 /*  Ready hook – bootstrap everything                                     */
@@ -202,7 +202,20 @@ Hooks.on('ready', () => {
 /* ===================================================================== */
 
 Hooks.on('getSceneControlButtons', (controls: any) => {
-    if (!game.user?.isGM) return;
+    // Show controls to any user that has access to at least one feature.
+    // GM always has full access; other roles depend on configured settings.
+    if (!game.user) return;
+    const isGM = game.user.isGM;
+
+    const canUseGenerator    = isGM || canUserAccessFeature('generator');
+    const canUseChat         = isGM || canUserAccessFeature('chat');
+    const canUseLibrary      = isGM || canUserAccessFeature('library');
+    const canUseConfig       = isGM; // Configuration is always GM-only
+    const canUseGameDirector = isGM || canUserAccessFeature('gameDirector');
+    const canUseTranscription= isGM || canUserAccessFeature('transcription');
+
+    // Don't add the control group at all if this user has no access to any feature
+    if (!canUseGenerator && !canUseChat && !canUseLibrary && !canUseGameDirector && !canUseTranscription) return;
 
     const openApp = (app: any, fallbackTab?: string): void => {
         try {
@@ -220,7 +233,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
             title: 'Generator',
             icon: 'fa-solid fa-magic',
             button: true,
-            visible: game.user.isGM,
+            visible: canUseGenerator,
             onChange: () => openApp(game.aiGM?.generateApp)
         },
         'ai-gm-chat': {
@@ -228,7 +241,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
             title: 'Chat',
             icon: 'fa-solid fa-comments',
             button: true,
-            visible: game.user.isGM,
+            visible: canUseChat,
             onChange: () => openApp(game.aiGM?.sessionApp)
         },
         'ai-gm-library': {
@@ -236,7 +249,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
             title: 'Library',
             icon: 'fa-solid fa-book',
             button: true,
-            visible: game.user.isGM,
+            visible: canUseLibrary,
             onChange: () => openApp(game.aiGM?.libraryApp)
         },
         'ai-gm-configuration': {
@@ -244,7 +257,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
             title: 'Configuration',
             icon: 'fa-solid fa-cogs',
             button: true,
-            visible: game.user.isGM,
+            visible: canUseConfig,
             onChange: () => openApp(game.aiGM?.configApp)
         },
         'ai-gm-game-director': {
@@ -252,7 +265,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
             title: 'Game Director',
             icon: 'fa-solid fa-dragon',
             button: true,
-            visible: game.user.isGM,
+            visible: canUseGameDirector,
             onChange: () => openApp(game.aiGM?.featuresApp)
         },
         'ai-gm-transcription': {
@@ -260,7 +273,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
             title: 'Transcription',
             icon: 'fa-solid fa-microphone',
             button: true,
-            visible: game.user.isGM,
+            visible: canUseTranscription,
             onChange: () => openApp(game.aiGM?.transcriptionApp)
         },
     };
@@ -272,7 +285,7 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
                 name: 'ai-gm',
                 title: 'AI Game Master',
                 icon: 'fa-solid fa-hat-wizard',
-                visible: game.user.isGM,
+                visible: true,
                 tools: objectTools
             };
         }
@@ -283,55 +296,20 @@ Hooks.on('getSceneControlButtons', (controls: any) => {
     if (!Array.isArray(controls)) return;
 
     if (!controls.find((c: any) => c.name === 'ai-gm')) {
+        const legacyTools: any[] = [];
+        if (canUseGenerator)     legacyTools.push({ name: 'ai-gm-generator',    title: 'Generator',     icon: 'fas fa-magic',      button: true, onClick: () => openApp(game.aiGM?.generateApp) });
+        if (canUseChat)          legacyTools.push({ name: 'ai-gm-chat',         title: 'Chat',          icon: 'fas fa-comments',   button: true, onClick: () => openApp(game.aiGM?.sessionApp) });
+        if (canUseLibrary)       legacyTools.push({ name: 'ai-gm-library',      title: 'Library',       icon: 'fas fa-book',       button: true, onClick: () => openApp(game.aiGM?.libraryApp) });
+        if (canUseConfig)        legacyTools.push({ name: 'ai-gm-configuration',title: 'Configuration', icon: 'fas fa-cogs',       button: true, onClick: () => openApp(game.aiGM?.configApp) });
+        if (canUseGameDirector)  legacyTools.push({ name: 'ai-gm-game-director',title: 'Game Director', icon: 'fas fa-dragon',     button: true, onClick: () => openApp(game.aiGM?.featuresApp) });
+        if (canUseTranscription) legacyTools.push({ name: 'ai-gm-transcription',title: 'Transcription', icon: 'fas fa-microphone', button: true, onClick: () => openApp(game.aiGM?.transcriptionApp) });
+
         controls.push({
             name: 'ai-gm',
             title: 'AI Game Master',
             icon: 'fas fa-hat-wizard',
             visible: true,
-            tools: [
-                {
-                    name: 'ai-gm-generator',
-                    title: 'Generator',
-                    icon: 'fas fa-magic',
-                    button: true,
-                    onClick: () => openApp(game.aiGM?.generateApp)
-                },
-                {
-                    name: 'ai-gm-chat',
-                    title: 'Chat',
-                    icon: 'fas fa-comments',
-                    button: true,
-                    onClick: () => openApp(game.aiGM?.sessionApp)
-                },
-                {
-                    name: 'ai-gm-library',
-                    title: 'Library',
-                    icon: 'fas fa-book',
-                    button: true,
-                    onClick: () => openApp(game.aiGM?.libraryApp)
-                },
-                {
-                    name: 'ai-gm-configuration',
-                    title: 'Configuration',
-                    icon: 'fas fa-cogs',
-                    button: true,
-                    onClick: () => openApp(game.aiGM?.configApp)
-                },
-                {
-                    name: 'ai-gm-game-director',
-                    title: 'Game Director',
-                    icon: 'fas fa-dragon',
-                    button: true,
-                    onClick: () => openApp(game.aiGM?.featuresApp)
-                },
-                {
-                    name: 'ai-gm-transcription',
-                    title: 'Transcription',
-                    icon: 'fas fa-microphone',
-                    button: true,
-                    onClick: () => openApp(game.aiGM?.transcriptionApp)
-                }
-            ],
+            tools: legacyTools,
             activeTool: 'ai-gm-generator'
         });
     }

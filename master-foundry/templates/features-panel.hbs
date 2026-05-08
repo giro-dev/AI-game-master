@@ -1,44 +1,7 @@
 <div class="ai-gm-panel">
-  <nav class="ai-gm-subtabs">
-    <a class="ai-gm-tab-btn item active" data-subtab="feat-settings"><i class="fas fa-sliders-h"></i> Settings</a>
-    <a class="ai-gm-tab-btn item" data-subtab="feat-director"><i class="fas fa-dragon"></i> Game Director</a>
-  </nav>
   <div class="ai-gm-panel-body">
-    {{!-- Settings subtab --}}
-    <div class="ai-gm-subtab-content" data-subtab-content="feat-settings">
-      <h4 class="section-header"><i class="fas fa-server"></i> Backend Connection</h4>
-      <div class="form-group">
-        <label for="ai-gm-server-url">Backend Server URL</label>
-        <input type="text" id="ai-gm-server-url" value="{{serverUrl}}" placeholder="http://localhost:8080" />
-        <p class="hint">URL of the AI Game Master backend server.</p>
-      </div>
-      <div class="btn-row">
-        <button type="button" class="btn btn-primary btn-block" data-action="save-server-url">
-          <i class="fas fa-save"></i> Save URL
-        </button>
-      </div>
-      <h4 class="section-header"><i class="fas fa-toggle-on"></i> Feature Toggles</h4>
-      <div class="features-toggle-list">
-        <label class="feature-toggle-item">
-          <input type="checkbox" id="ai-gm-enable-transcription" {{#if enableTranscription}}checked{{/if}}>
-          <span class="feature-toggle-label">
-            <i class="fas fa-microphone"></i>
-            <strong>Enable Voice Transcription</strong>
-            <span class="hint">Allow microphone capture during adventure sessions.</span>
-          </span>
-        </label>
-        <label class="feature-toggle-item">
-          <input type="checkbox" id="ai-gm-enable-game-director" {{#if enableGameDirector}}checked{{/if}}>
-          <span class="feature-toggle-label">
-            <i class="fas fa-dragon"></i>
-            <strong>Enable Game Director</strong>
-            <span class="hint">Enable the AI Game Director for real-time adventure narration.</span>
-          </span>
-        </label>
-      </div>
-    </div>
-    {{!-- Game Director subtab --}}
-    <div class="ai-gm-subtab-content" data-subtab-content="feat-director">
+    {{!-- Game Director --}}
+
       {{#if enableGameDirector}}
       <h4 class="section-header">Adventure Director</h4>
       <p class="hint">Carrega una aventura, inicia una sessió i deixa que el director narri en temps real.</p>
@@ -183,6 +146,5 @@
         </span>
       </label>
       {{/if}}
-    </div>
   </div>{{!-- /.ai-gm-panel-body --}}
 </div>

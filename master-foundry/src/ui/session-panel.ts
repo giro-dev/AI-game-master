@@ -5,7 +5,7 @@
  */
 
 import type { ChatEntry, VTTAction } from '../types/index.js';
-import { getServerUrl } from '../settings.js';
+import { getServerUrl, getAllowedChunkTypesForCurrentUser } from '../settings.js';
 import { escapeHtml, stripHtml, type PanelContext } from './panel-utils.js';
 
 export class SessionPanel {
@@ -93,7 +93,8 @@ export class SessionPanel {
             foundrySystem: game.system.id,
             conversationId: `${game.world.id}-session`,
             abilities: token ? this._collectTokenAbilities(token) : [],
-            worldState: this.collectWorldState()
+            worldState: this.collectWorldState(),
+            allowedChunkTypes: getAllowedChunkTypesForCurrentUser()
         };
 
         try {

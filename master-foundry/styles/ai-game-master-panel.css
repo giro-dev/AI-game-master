@@ -705,3 +705,72 @@
   margin: 0;
   font-size: 0.75rem;
 }
+
+/* ─── Role Access Control Table ─────────────────────────────────────── */
+
+.ai-gm-panel table.ai-gm-role-access-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid rgba(155, 89, 182, 0.25);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.82rem;
+  table-layout: fixed;
+}
+
+.ai-gm-panel table.ai-gm-role-access-table thead tr {
+  background: rgba(155, 89, 182, 0.12);
+}
+
+.ai-gm-panel table.ai-gm-role-access-table th {
+  padding: 0.4rem 0.5rem;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7b2fb5;
+  border-bottom: 1px solid rgba(155, 89, 182, 0.25);
+}
+
+.ai-gm-panel table.ai-gm-role-access-table td {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid rgba(155, 89, 182, 0.1);
+  vertical-align: middle;
+}
+
+.ai-gm-panel table.ai-gm-role-access-table tbody tr:hover {
+  background: rgba(155, 89, 182, 0.05);
+}
+
+.ai-gm-panel table.ai-gm-role-access-table .ai-gm-col-feature {
+  width: auto;
+  text-align: left;
+}
+
+.ai-gm-panel table.ai-gm-role-access-table .ai-gm-col-role {
+  width: 68px;
+  text-align: center;
+}
+
+.ai-gm-panel .ai-gm-role-cell-label {
+  display: flex !important;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.ai-gm-panel .ai-gm-role-checkbox {
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ai-gm-panel .ai-gm-role-checkbox:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

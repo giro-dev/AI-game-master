@@ -1,4 +1,10 @@
 <div class="ai-gm-panel">
+  <nav class="ai-gm-subtabs">
+    <a class="ai-gm-tab-btn item active" data-subtab="config-main"><i class="fas fa-cogs"></i> Configuration</a>
+    <a class="ai-gm-tab-btn item" data-subtab="config-settings"><i class="fas fa-sliders-h"></i> Settings</a>
+  </nav>
+  <div class="ai-gm-panel-body">
+  <div class="ai-gm-subtab-content" data-subtab-content="config-main">
   <h4 class="section-header">System Information</h4>
   <div class="profile-grid">
     <div class="profile-card">
@@ -141,4 +147,98 @@
       <i class="fas fa-plug"></i> Reconnect WS
     </button>
   </div>
+  </div>{{!-- /config-main --}}
+  <div class="ai-gm-subtab-content" data-subtab-content="config-settings">
+    <h4 class="section-header"><i class="fas fa-server"></i> Backend Connection</h4>
+    <div class="form-group">
+      <label for="ai-gm-server-url">Backend Server URL</label>
+      <input type="text" id="ai-gm-server-url" value="{{serverUrl}}" placeholder="http://localhost:8080" />
+      <p class="hint">URL of the AI Game Master backend server.</p>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn btn-primary btn-block" data-action="save-server-url">
+        <i class="fas fa-save"></i> Save URL
+      </button>
+    </div>
+    <h4 class="section-header"><i class="fas fa-toggle-on"></i> Feature Toggles</h4>
+    <div class="features-toggle-list">
+      <label class="feature-toggle-item">
+        <input type="checkbox" id="ai-gm-enable-transcription" {{#if enableTranscription}}checked{{/if}}>
+        <span class="feature-toggle-label">
+          <i class="fas fa-microphone"></i>
+          <strong>Enable Voice Transcription</strong>
+          <span class="hint">Allow microphone capture during adventure sessions.</span>
+        </span>
+      </label>
+      <label class="feature-toggle-item">
+        <input type="checkbox" id="ai-gm-enable-game-director" {{#if enableGameDirector}}checked{{/if}}>
+        <span class="feature-toggle-label">
+          <i class="fas fa-dragon"></i>
+          <strong>Enable Game Director</strong>
+          <span class="hint">Enable the AI Game Director for real-time adventure narration.</span>
+        </span>
+      </label>
+    </div>
+
+    <h4 class="section-header"><i class="fas fa-user-shield"></i> Role Access Control</h4>
+    <p class="hint">Choose which roles can access each feature. The Game Master role always has full access.</p>
+    <table class="ai-gm-role-access-table">
+      <thead>
+        <tr>
+          <th class="ai-gm-col-feature">Feature</th>
+          {{#each roleAccessHeaders}}
+          <th class="ai-gm-col-role">{{this.label}}</th>
+          {{/each}}
+        </tr>
+      </thead>
+      <tbody>
+        {{#each roleAccessRows}}
+        <tr>
+          <td class="ai-gm-col-feature"><i class="fas {{this.icon}}"></i> {{this.label}}</td>
+          {{#each this.roles}}
+          <td class="ai-gm-col-role">
+            <label class="ai-gm-role-cell-label">
+              <input type="checkbox" class="ai-gm-role-checkbox"
+                data-feature="{{../key}}" data-role="{{this.value}}"
+                {{#if this.checked}}checked{{/if}}
+                {{#if this.isGM}}disabled title="Game Master always has access"{{/if}}>
+            </label>
+          </td>
+          {{/each}}
+        </tr>
+        {{/each}}
+      </tbody>
+    </table>
+
+    <h4 class="section-header"><i class="fas fa-search"></i> RAG Search Scope by Role</h4>
+    <p class="hint">Choose which content categories each role is allowed to search in the AI knowledge base. The Game Master always searches everything.</p>
+    <table class="ai-gm-role-access-table">
+      <thead>
+        <tr>
+          <th class="ai-gm-col-feature">Content Category</th>
+          {{#each roleAccessHeaders}}
+          <th class="ai-gm-col-role">{{this.label}}</th>
+          {{/each}}
+        </tr>
+      </thead>
+      <tbody>
+        {{#each ragChunkRows}}
+        <tr>
+          <td class="ai-gm-col-feature">{{this.label}}</td>
+          {{#each this.roles}}
+          <td class="ai-gm-col-role">
+            <label class="ai-gm-role-cell-label">
+              <input type="checkbox" class="ai-gm-rag-chunk-checkbox"
+                data-chunk-type="{{../chunkType}}" data-role="{{this.value}}"
+                {{#if this.checked}}checked{{/if}}
+                {{#if this.isGM}}disabled title="Game Master always searches all content"{{/if}}>
+            </label>
+          </td>
+          {{/each}}
+        </tr>
+        {{/each}}
+      </tbody>
+    </table>
+  </div>{{!-- /config-settings --}}
+  </div>{{!-- /.ai-gm-panel-body --}}
 </div>

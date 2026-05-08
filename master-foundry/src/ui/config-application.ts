@@ -50,6 +50,33 @@ export class ConfigApplication extends Application {
     activateListeners(html: any): void {
         super.activateListeners(html);
         this._panel.activateListeners(html);
+        this._wireSubtabs(html);
+    }
+
+    private _wireSubtabs(html: any): void {
+        const btnSel = '.ai-gm-subtabs .ai-gm-tab-btn, .ai-gm-subtabs .item';
+        const contents = html.find('.ai-gm-panel-body .ai-gm-subtab-content');
+
+        const activate = (subtab: string): void => {
+            html.find(btnSel).removeClass('active');
+            html.find(`${btnSel.split(',').map((s: string) => `${s.trim()}[data-subtab="${subtab}"]`).join(',')}`).addClass('active');
+            contents.hide();
+            html.find(`.ai-gm-subtab-content[data-subtab-content="${subtab}"]`).show();
+        };
+
+        contents.hide();
+
+        html.find(btnSel).off('click.subtabs').on('click.subtabs', (ev: any) => {
+            ev.preventDefault();
+            const subtab = String(ev.currentTarget?.dataset?.subtab ?? '');
+            if (subtab) activate(subtab);
+        });
+
+        const activeBtn = html.find(`${btnSel.split(',').map((s: string) => `${s.trim()}.active`).join(',')}`).first();
+        const init = activeBtn.length
+            ? String(activeBtn.data('subtab'))
+            : String(html.find(btnSel).first().data('subtab') ?? '');
+        if (init) activate(init);
     }
 
     /** Delegate reference character storage (called from actor context-menu hook). */

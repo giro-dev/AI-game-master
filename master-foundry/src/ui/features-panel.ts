@@ -20,7 +20,7 @@ import type {
     AdventureStateUpdatePayload,
     VTTAction
 } from '../types/index.js';
-import { getServerUrl, isTranscriptionEnabled, isGameDirectorEnabled, MODULE_ID, DEFAULT_SERVER_URL } from '../settings.js';
+import { getServerUrl, isTranscriptionEnabled, isGameDirectorEnabled, MODULE_ID } from '../settings.js';
 import { escapeHtml, stripHtml, type PanelContext } from './panel-utils.js';
 import { SessionPanel } from './session-panel.js';
 
@@ -119,27 +119,13 @@ export class FeaturesPanel {
     /* ------------------------------------------------------------------ */
 
     activateListeners(html: any): void {
-        // Feature toggles
-        html.find('#ai-gm-enable-transcription').on('change', async (ev: any) => {
-            await game.settings.set(MODULE_ID, 'enableTranscription', ev.target.checked);
-            this.ctx.render(false);
-        });
+        // Quick-toggles inside the Game Director disabled view
         html.find('#ai-gm-enable-transcription-quick').on('change', async (ev: any) => {
             await game.settings.set(MODULE_ID, 'enableTranscription', ev.target.checked);
             this.ctx.render(false);
         });
-        html.find('#ai-gm-enable-game-director').on('change', async (ev: any) => {
-            await game.settings.set(MODULE_ID, 'enableGameDirector', ev.target.checked);
-            this.ctx.render(false);
-        });
         html.find('#ai-gm-enable-game-director-quick').on('change', async (ev: any) => {
             await game.settings.set(MODULE_ID, 'enableGameDirector', ev.target.checked);
-            this.ctx.render(false);
-        });
-        html.find('[data-action="save-server-url"]').on('click', async () => {
-            const url = String(html.find('#ai-gm-server-url').val() || '').trim() || DEFAULT_SERVER_URL;
-            await game.settings.set(MODULE_ID, 'serverUrl', url);
-            ui.notifications?.info('Server URL saved.');
             this.ctx.render(false);
         });
 
