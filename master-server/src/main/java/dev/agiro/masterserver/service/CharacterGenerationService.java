@@ -417,5 +417,78 @@ public class CharacterGenerationService {
         log.warn("No name found in core concept: {}", coreConcept.keySet());
         return "AI Character";
     }
+
+    /**
+     * Validate character data against blueprint constraints.
+     * Checks field types, min/max bounds, and required fields.
+     */
+    public void validateAgainstBlueprint(
+            Map<String, Object> characterData,
+            CharacterBlueprintDto blueprint,
+            ValidateCharacterResponse response) {
+
+        if (blueprint.getActorFields() == null) return;
+
+        for (Object fieldObj : blueprint.getActorFields()) {
+            if (!(fieldObj instanceof Map)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> field = (Map<String, Object>) fieldObj;
+
+            String path = (String) field.get("path");
+            String type = (String) field.get("type");
+            Boolean required = (Boolean) field.get("required");
+
+            if (path == null) continue;
+
+            // Resolve value from character data using dot notation
+            Object value = resolveNestedValue(characterData, path);
+
+            // Check required
+            if (Boolean.TRUE.equals(required) && (value == null || value.toString().isBlank())) {
+                response.getErrors().add(new ValidateCharacterResponse.ValidationError(
+                        path, "Required field is empty", "error"));
+                continue;
+            }
+
+            if (value == null) continue;
+
+            // Check numeric constraints
+            if (("number".equals(type) || "resource".equals(type)) && value instanceof Number numVal) {
+                Object minObj = field.get("min");
+                Object maxObj = field.get("max");
+
+                if (minObj instanceof Number min && numVal.doubleValue() < min.doubleValue()) {
+                    response.getErrors().add(new ValidateCharacterResponse.ValidationError(
+                            path,
+                            String.format("Value %s is below minimum %s", numVal, min),
+                            "error"));
+                }
+
+                if (maxObj instanceof Number max && numVal.doubleValue() > max.doubleValue()) {
+                    response.getErrors().add(new ValidateCharacterResponse.ValidationError(
+                            path,
+                            String.format("Value %s exceeds maximum %s", numVal, max),
+                            "error"));
+                }
+            }
+        }
+    }
+
+    private Object resolveNestedValue(Map<String, Object> data, String path) {
+        String cleanPath = path.startsWith("system.") ? path.substring(7) : path;
+        String[] parts = cleanPath.split("\\.");
+        Object current = data;
+
+        for (String part : parts) {
+            if (current instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> map = (Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                return null;
+            }
+        }
+        return current;
+    }
 }
 

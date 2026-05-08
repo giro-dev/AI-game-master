@@ -11,6 +11,8 @@ import { SystemSnapshotSender } from './system-snapshot/snapshot-sender.js';
 import { PostProcessingEngine } from './system-snapshot/post-processor.js';
 import { AIGameMasterPanel } from './ui/ai-game-master-panel.js';
 import { SystemSkillRegistry } from './skills/system-skill.js';
+import { CharacterTemplateService } from './services/character-template-service.js';
+import { CreationWizardService } from './services/creation-wizard-service.js';
 
 const SERVER = 'http://localhost:8080';
 
@@ -27,6 +29,8 @@ Hooks.on('ready', () => {
     let postProcessor: PostProcessingEngine | null = null;
     let panel: AIGameMasterPanel | null = null;
     let skillRegistry: SystemSkillRegistry | null = null;
+    let templateService: CharacterTemplateService | null = null;
+    let wizardService: CreationWizardService | null = null;
 
     try {
         // Register settings (safe to call multiple times in same session)
@@ -49,6 +53,21 @@ Hooks.on('ready', () => {
         skillRegistry.init(game.system.id, game.world?.id ?? '');
     } catch (e) {
         console.error('[AI-GM] SkillRegistry init failed:', e);
+    }
+
+    // ── Template Service — save/load character presets ──
+    try {
+        templateService = new CharacterTemplateService();
+        templateService.init();
+    } catch (e) {
+        console.error('[AI-GM] TemplateService init failed:', e);
+    }
+
+    // ── Creation Wizard — step-by-step guided creation ──
+    try {
+        wizardService = new CreationWizardService();
+    } catch (e) {
+        console.error('[AI-GM] WizardService init failed:', e);
     }
 
     try {
@@ -85,6 +104,8 @@ Hooks.on('ready', () => {
         snapshotSender,
         postProcessor,
         skillRegistry,
+        templateService,
+        wizardService,
         panel,
         open(): void {
             if (panel) {

@@ -1,10 +1,6 @@
 package dev.agiro.masterserver.controller;
 
-import dev.agiro.masterserver.dto.CreateCharacterRequest;
-import dev.agiro.masterserver.dto.CreateCharacterResponse;
-import dev.agiro.masterserver.dto.ExplainCharacterRequest;
-import dev.agiro.masterserver.dto.ExplainCharacterResponse;
-import dev.agiro.masterserver.dto.ReferenceCharacterDto;
+import dev.agiro.masterserver.dto.*;
 import dev.agiro.masterserver.service.CharacterGenerationService;
 import dev.agiro.masterserver.service.SystemProfileService;
 import lombok.extern.slf4j.Slf4j;
@@ -143,5 +139,116 @@ public class CharacterGenerationController {
             @PathVariable String actorType) {
         systemProfileService.deleteReferenceCharacter(systemId, actorType);
         return ResponseEntity.ok().build();
+    }
+
+    // ── Batch Generation ─────────────────────────────────────────────────
+
+    /**
+     * Generate multiple characters in a single batch request.
+     * Each character gets a unique concept based on the shared prompt.
+     */
+    @PostMapping(value = "/generate/batch",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<BatchCharacterResponse> generateBatch(@RequestBody BatchCharacterRequest request) {
+        log.info("Batch generation request: {} x{} for {}", request.getPrompt(), request.getCount(), request.getActorType());
+
+        int count = Math.max(1, Math.min(10, request.getCount()));
+        BatchCharacterResponse batchResponse = new BatchCharacterResponse();
+        batchResponse.setRequested(count);
+
+        if (request.getPrompt() == null || request.getPrompt().isBlank()) {
+            batchResponse.setSuccess(false);
+            batchResponse.setReasoning("Prompt is required");
+            return ResponseEntity.badRequest().body(batchResponse);
+        }
+
+        if (request.getBlueprint() == null) {
+            batchResponse.setSuccess(false);
+            batchResponse.setReasoning("Blueprint is required");
+            return ResponseEntity.badRequest().body(batchResponse);
+        }
+
+        String variationHint = request.getVariationMode() != null ? request.getVariationMode() : "diverse";
+
+        for (int i = 0; i < count; i++) {
+            try {
+                // Append variation hint to the prompt for diversity
+                String variedPrompt = count > 1
+                        ? request.getPrompt() + String.format(
+                            "\n\n[Variation %d of %d. Mode: %s. Create a DISTINCT character different from previous ones.]",
+                            i + 1, count, variationHint)
+                        : request.getPrompt();
+
+                CreateCharacterRequest singleRequest = new CreateCharacterRequest();
+                singleRequest.setPrompt(variedPrompt);
+                singleRequest.setActorType(request.getActorType());
+                singleRequest.setLanguage(request.getLanguage());
+                singleRequest.setWorldId(request.getWorldId());
+                singleRequest.setBlueprint(request.getBlueprint());
+                singleRequest.setSessionId(request.getSessionId());
+                singleRequest.setReferenceCharacter(request.getReferenceCharacter());
+
+                CreateCharacterResponse result = characterGenerationService.generateCharacter(
+                        singleRequest, request.getSessionId());
+
+                if (result.getSuccess()) {
+                    batchResponse.getCharacters().add(result);
+                } else {
+                    batchResponse.getErrors().add(
+                            String.format("Character %d: %s", i + 1, result.getReasoning()));
+                }
+            } catch (Exception e) {
+                log.error("Batch generation failed for character {}", i + 1, e);
+                batchResponse.getErrors().add(
+                        String.format("Character %d: %s", i + 1, e.getMessage()));
+            }
+        }
+
+        batchResponse.setGenerated(batchResponse.getCharacters().size());
+        batchResponse.setSuccess(batchResponse.getGenerated() > 0);
+        batchResponse.setReasoning(String.format("Generated %d of %d characters",
+                batchResponse.getGenerated(), count));
+
+        return ResponseEntity.ok(batchResponse);
+    }
+
+    // ── Validation Endpoint ──────────────────────────────────────────────
+
+    /**
+     * Validate character data against blueprint constraints.
+     * Used by the preview/edit flow to show real-time validation.
+     */
+    @PostMapping(value = "/validate",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ValidateCharacterResponse> validateCharacter(@RequestBody ValidateCharacterRequest request) {
+        log.info("Validation request for system={}, actorType={}", request.getSystemId(), request.getActorType());
+
+        ValidateCharacterResponse response = new ValidateCharacterResponse();
+
+        if (request.getCharacterData() == null) {
+            response.setValid(false);
+            response.getErrors().add(new ValidateCharacterResponse.ValidationError(
+                    "characterData", "Character data is required", "error"));
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        try {
+            // Validate against blueprint constraints
+            if (request.getBlueprint() != null && request.getBlueprint().getActorFields() != null) {
+                characterGenerationService.validateAgainstBlueprint(
+                        request.getCharacterData(), request.getBlueprint(), response);
+            }
+
+            response.setValid(response.getErrors().isEmpty());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Validation failed", e);
+            response.setValid(false);
+            response.getErrors().add(new ValidateCharacterResponse.ValidationError(
+                    "internal", "Validation error: " + e.getMessage(), "error"));
+            return ResponseEntity.internalServerError().body(response);
+        }
     }
 }

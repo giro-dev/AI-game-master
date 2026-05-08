@@ -553,3 +553,294 @@
   margin: 0;
   font-size: 0.75rem;
 }
+
+/* ─── Creation Mode Toggle ─────────────────────────────────────────── */
+
+.ai-gm-panel .creation-mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ai-gm-panel .creation-mode-toggle .btn {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
+  background: #f0f0f0;
+  color: #666;
+  transition: all 0.15s ease;
+}
+
+.ai-gm-panel .creation-mode-toggle .btn.active {
+  background: #7b2fb5;
+  color: white;
+}
+
+.ai-gm-panel .creation-mode-toggle .btn + .btn {
+  border-left: 1px solid #ccc;
+}
+
+/* ─── Wizard Steps ─────────────────────────────────────────────────── */
+
+.ai-gm-panel .wizard-steps {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  padding: 0.4rem;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+}
+
+.ai-gm-panel .wizard-step {
+  flex: 1;
+  text-align: center;
+  padding: 0.25rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  color: #999;
+  background: transparent;
+  position: relative;
+}
+
+.ai-gm-panel .wizard-step .step-number {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 50%;
+  background: #ddd;
+  color: #999;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-align: center;
+  margin-right: 0.2rem;
+}
+
+.ai-gm-panel .wizard-step.active {
+  background: rgba(123, 47, 181, 0.1);
+  color: #7b2fb5;
+  font-weight: 600;
+}
+
+.ai-gm-panel .wizard-step.active .step-number {
+  background: #7b2fb5;
+  color: white;
+}
+
+.ai-gm-panel .wizard-step.completed {
+  color: #2e7d32;
+}
+
+.ai-gm-panel .wizard-step.completed .step-number {
+  background: #2e7d32;
+  color: white;
+}
+
+/* ─── Template Selector ────────────────────────────────────────────── */
+
+.ai-gm-panel .template-selector {
+  background: rgba(123, 47, 181, 0.04);
+  border: 1px solid rgba(123, 47, 181, 0.15);
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+/* ─── Batch Controls ───────────────────────────────────────────────── */
+
+.ai-gm-panel .batch-controls .batch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ai-gm-panel .batch-controls input[type="number"] {
+  width: 65px;
+  text-align: center;
+}
+
+/* ─── Preview & Edit Area ──────────────────────────────────────────── */
+
+.ai-gm-panel .char-preview-card {
+  margin-top: 0.5rem;
+  padding: 0.6rem;
+  background: rgba(155, 89, 182, 0.06);
+  border: 1px solid rgba(155, 89, 182, 0.25);
+  border-radius: 4px;
+}
+
+.ai-gm-panel .char-preview-card .preview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.ai-gm-panel .char-preview-card .preview-header img {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid #ccc;
+}
+
+.ai-gm-panel .char-preview-card .preview-header .preview-name {
+  flex: 1;
+}
+
+.ai-gm-panel .char-preview-card .preview-header .preview-name input {
+  font-weight: 700;
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+  padding: 0.15rem 0.3rem;
+  background: transparent;
+  width: 100%;
+}
+
+.ai-gm-panel .char-preview-card .preview-header .preview-name input:hover,
+.ai-gm-panel .char-preview-card .preview-header .preview-name input:focus {
+  border-color: #7b2fb5;
+  background: white;
+}
+
+.ai-gm-panel .preview-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem;
+}
+
+.ai-gm-panel .preview-field {
+  display: flex;
+  flex-direction: column;
+  padding: 0.2rem 0.3rem;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid #eee;
+  border-radius: 2px;
+  font-size: 0.78rem;
+}
+
+.ai-gm-panel .preview-field label {
+  font-size: 0.7rem;
+  color: #888;
+  font-weight: 600;
+}
+
+.ai-gm-panel .preview-field input {
+  border: 1px solid transparent;
+  padding: 0.1rem 0.2rem;
+  font-size: 0.82rem;
+  background: transparent;
+}
+
+.ai-gm-panel .preview-field input:hover,
+.ai-gm-panel .preview-field input:focus {
+  border-color: #7b2fb5;
+  background: white;
+}
+
+.ai-gm-panel .preview-field.modified {
+  border-color: #ff9800;
+  background: rgba(255, 152, 0, 0.06);
+}
+
+.ai-gm-panel .preview-items-section {
+  margin-top: 0.5rem;
+}
+
+.ai-gm-panel .preview-items-section h5 {
+  font-size: 0.82rem;
+  margin: 0.3rem 0;
+  color: #555;
+}
+
+.ai-gm-panel .preview-item {
+  padding: 0.3rem;
+  margin-bottom: 0.25rem;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid #eee;
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
+
+.ai-gm-panel .preview-item .item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.ai-gm-panel .preview-item .item-type-badge {
+  font-size: 0.68rem;
+  background: #e0e0e0;
+  padding: 0.1rem 0.35rem;
+  border-radius: 8px;
+  font-weight: 500;
+  color: #555;
+}
+
+/* ─── Batch Results ────────────────────────────────────────────────── */
+
+.ai-gm-panel .batch-results {
+  margin-top: 0.5rem;
+}
+
+.ai-gm-panel .batch-result-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.5rem;
+  margin-bottom: 0.25rem;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  font-size: 0.82rem;
+}
+
+.ai-gm-panel .batch-result-item .batch-char-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+/* ─── Template Manager Dialog ──────────────────────────────────────── */
+
+.ai-gm-panel .template-manager {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.ai-gm-panel .template-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #eee;
+  font-size: 0.82rem;
+}
+
+.ai-gm-panel .template-entry .template-info {
+  flex: 1;
+}
+
+.ai-gm-panel .template-entry .template-name {
+  font-weight: 600;
+}
+
+.ai-gm-panel .template-entry .template-desc {
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.ai-gm-panel .template-entry .template-actions {
+  display: flex;
+  gap: 0.2rem;
+}
+
+/* ─── Hidden Utility ───────────────────────────────────────────────── */
+
+.ai-gm-panel .hidden {
+  display: none !important;
+}

@@ -14,6 +14,9 @@ import type { SystemSkill } from '../skills/system-skill.js';
 import type {
     FieldDefinition,
     CharacterData,
+    CharacterTemplate,
+    CharacterPreview,
+    EditableField,
     ValidationError,
     ChatEntry,
     BookInfo,
@@ -40,6 +43,13 @@ export class AIGameMasterPanel extends Application {
     private selectedFields: Set<string> = new Set();
     private characterData: CharacterData | null = null;
     private validationErrors: ValidationError[] = [];
+
+    // ── Creation flow state ──
+    private wizardMode: boolean = false;
+    private selectedTemplateId: string = '';
+    private characterPreview: CharacterPreview | null = null;
+    private batchCount: number = 1;
+    private batchResults: CharacterData[] = [];
 
     // ── Session tab state ──
     private chatHistory: ChatEntry[] = [];
@@ -192,6 +202,17 @@ export class AIGameMasterPanel extends Application {
                 return String(a.type).localeCompare(String(b.type));
             });
 
+        // Template data
+        const templates: CharacterTemplate[] = game.aiGM?.templateService?.getByActorType(this.selectedActorType) ?? [];
+        const selectedTemplate = this.selectedTemplateId
+            ? game.aiGM?.templateService?.getById(this.selectedTemplateId) ?? null
+            : null;
+
+        // Wizard state
+        const wizard = game.aiGM?.wizardService;
+        const wizardSteps = wizard?.getAllSteps() ?? [];
+        const wizardCurrentStep = wizard?.getCurrentStep() ?? 'template';
+
         return {
             // Characters tab
             actorTypes: actorTypes.map(id => ({
@@ -201,8 +222,24 @@ export class AIGameMasterPanel extends Application {
             })),
             fieldTreeHTML: FieldTreeBuilder.buildTree(this.actorFields, this.selectedFields),
 
+            // Creation flow
+            wizardMode: this.wizardMode,
+            wizardSteps,
+            wizardStepTemplate: wizardCurrentStep === 'template',
+            wizardStepFields: wizardCurrentStep === 'fields',
+            wizardStepPrompt: wizardCurrentStep === 'prompt',
+            wizardStepPreview: wizardCurrentStep === 'preview',
+            wizardCanPrev: wizard?.canGoPrev() ?? false,
+            wizardCanNext: wizard?.canGoNext() ?? false,
+            templates: templates.map(t => ({
+                ...t,
+                selected: t.id === this.selectedTemplateId
+            })),
+            selectedTemplateDescription: selectedTemplate?.description ?? '',
+
             // Items tab
             itemPacks,
+            itemTypeNames: itemTypes,
 
             // Library tab
             books: this.books.map((book: any) => ({
@@ -220,7 +257,6 @@ export class AIGameMasterPanel extends Application {
             systemTitle: game.system?.title ?? 'Unknown System',
             foundryVersion: game.version ?? '',
             actorTypeNames: actorTypes,
-            itemTypeNames: itemTypes,
             profile: (await game.aiGM?.snapshotSender?.getProfile()) ?? null,
             wsConnected: game.aiGM?.wsClient?.isConnected() ?? false,
             serverUrl: API,
@@ -282,6 +318,19 @@ export class AIGameMasterPanel extends Application {
         html.find('#gm-field-tree').on('change', '.field-checkbox', this._onFieldToggle.bind(this));
         html.find('[data-action="generate-character"]').on('click', this._onGenerateCharacter.bind(this));
         html.find('[data-action="view-blueprint"]').on('click', this._onViewBlueprint.bind(this));
+
+        // ── Creation flow (templates, wizard, batch, preview) ──
+        html.find('[data-action="set-mode-freeform"]').on('click', () => { this.wizardMode = false; this.render(false); });
+        html.find('[data-action="set-mode-wizard"]').on('click', () => { this.wizardMode = true; this.render(false); });
+        html.find('#gm-template-select').on('change', this._onTemplateSelect.bind(this));
+        html.find('[data-action="save-as-template"]').on('click', this._onSaveAsTemplate.bind(this));
+        html.find('[data-action="manage-templates"]').on('click', this._onManageTemplates.bind(this));
+        html.find('[data-action="wizard-prev"]').on('click', this._onWizardPrev.bind(this));
+        html.find('[data-action="wizard-next"]').on('click', this._onWizardNext.bind(this));
+        html.find('#gm-batch-count').on('change', (ev: any) => { this.batchCount = parseInt(ev.currentTarget.value) || 1; });
+        html.find('[data-action="create-from-preview"]').on('click', this._onCreateFromPreview.bind(this));
+        html.find('#char-preview').on('change', '.preview-edit-field', this._onPreviewFieldEdit.bind(this));
+        html.find('#char-preview').on('input', '.preview-name-input', this._onPreviewNameEdit.bind(this));
 
         // ── Items tab ──
         html.find('[data-action="generate-items"]').on('click', this._onGenerateItems.bind(this));
@@ -545,7 +594,61 @@ export class AIGameMasterPanel extends Application {
 
     private _renderCharacterResult(html: any): void {
         const container = html.find('#char-result');
+        const previewContainer = html.find('#char-preview');
         if (!this.characterData) { container.html(''); return; }
+
+        // If wizard mode, render preview for editing instead of simple result card
+        if (this.wizardMode && previewContainer.length) {
+            game.aiGM?.wizardService?.setGeneratedData(this.characterData);
+            game.aiGM?.wizardService?.goToStep('preview');
+            this._renderCharacterPreview(previewContainer);
+            previewContainer.removeClass('hidden');
+            container.html('');
+            return;
+        }
+
+        // Batch results
+        if (this.batchResults.length > 1) {
+            const batchHTML = this.batchResults.map((charData, idx) => `
+                <div class="batch-result-item">
+                    <span class="batch-char-name">${charData.actor?.name ?? `Character ${idx + 1}`}</span>
+                    <button type="button" class="btn btn-sm btn-success" data-action="create-character" data-batch-idx="${idx}">
+                        <i class="fas fa-user-plus"></i> Create
+                    </button>
+                </div>
+            `).join('');
+
+            container.html(`
+                <div class="result-card">
+                    <h4><i class="fas fa-users"></i> ${this.batchResults.length} Characters Generated</h4>
+                    <div class="batch-results">${batchHTML}</div>
+                    <div class="btn-row" style="margin-top: 0.5rem;">
+                        <button type="button" class="btn btn-success btn-block" data-action="create-all-batch">
+                            <i class="fas fa-user-plus"></i> Create All in Foundry
+                        </button>
+                    </div>
+                </div>
+            `);
+
+            // Bind batch create handlers
+            container.find('[data-action="create-character"]').on('click', async (ev: any) => {
+                const idx = parseInt(ev.currentTarget.dataset.batchIdx);
+                if (idx >= 0 && idx < this.batchResults.length) {
+                    this.characterData = this.batchResults[idx];
+                    await this._onCreateCharacter();
+                }
+            });
+            container.find('[data-action="create-all-batch"]').on('click', async () => {
+                for (const charData of this.batchResults) {
+                    this.characterData = charData;
+                    await this._onCreateCharacter();
+                }
+                ui.notifications.info(`Created ${this.batchResults.length} characters.`);
+                this.batchResults = [];
+                container.html('');
+            });
+            return;
+        }
 
         let warningsHTML = '';
         if (this.validationErrors.length > 0) {
@@ -1006,6 +1109,320 @@ export class AIGameMasterPanel extends Application {
     }
 
     /* ================================================================== */
+    /*  CREATION FLOW — Templates, Wizard, Batch, Preview                  */
+    /* ================================================================== */
+
+    private _onTemplateSelect(ev: any): void {
+        const templateId = ev.currentTarget.value;
+        this.selectedTemplateId = templateId;
+
+        if (templateId) {
+            const template = game.aiGM?.templateService?.getById(templateId);
+            if (template) {
+                game.aiGM?.wizardService?.applyTemplate(template);
+                this.selectedActorType = template.actorType;
+                this.selectedFields = new Set(template.selectedFields);
+
+                // Reload fields for the template's actor type
+                try {
+                    const schema = game.aiGM?.blueprintGenerator?.schemaExtractor?.extractActorType(template.actorType);
+                    if (schema) this.actorFields = schema.fields;
+                } catch (_e) { /* ignore */ }
+            }
+        }
+        this.render(false);
+    }
+
+    private async _onSaveAsTemplate(): Promise<void> {
+        const html = this.element;
+        const prompt: string = html.find('#gm-char-prompt').val()?.trim() || '';
+        const lang: string = html.find('#gm-char-lang').val() || 'en';
+
+        const content = `
+            <form>
+                <div class="form-group"><label>Template Name</label>
+                    <input type="text" name="name" placeholder="e.g. Detective, Soldier, Mage" required />
+                </div>
+                <div class="form-group"><label>Description</label>
+                    <textarea name="description" rows="2" placeholder="Brief description of this archetype..."></textarea>
+                </div>
+            </form>
+        `;
+
+        new Dialog({
+            title: 'Save as Template',
+            content,
+            buttons: {
+                save: {
+                    icon: '<i class="fas fa-save"></i>',
+                    label: 'Save',
+                    callback: async (dialogHtml: any) => {
+                        const name = dialogHtml.find('[name="name"]').val()?.trim();
+                        const description = dialogHtml.find('[name="description"]').val()?.trim() || '';
+                        if (!name) return ui.notifications.warn('Template name is required.');
+
+                        const tplService = game.aiGM?.templateService;
+                        if (!tplService) return ui.notifications.error('Template service not available.');
+
+                        const template = tplService.createNew(this.selectedActorType);
+                        template.name = name;
+                        template.description = description;
+                        template.promptText = prompt;
+                        template.selectedFields = Array.from(this.selectedFields);
+                        template.language = lang;
+
+                        await tplService.save(template);
+                        ui.notifications.info(`Template "${name}" saved.`);
+                        this.render(false);
+                    }
+                },
+                cancel: { label: 'Cancel' }
+            }
+        }).render(true);
+    }
+
+    private _onManageTemplates(): void {
+        const templates = game.aiGM?.templateService?.getAll() ?? [];
+
+        if (templates.length === 0) {
+            ui.notifications.info('No templates saved yet. Use the save button to create one.');
+            return;
+        }
+
+        const templateListHTML = templates.map((t: CharacterTemplate) => `
+            <div class="template-entry" data-template-id="${t.id}">
+                <div class="template-info">
+                    <span class="template-name">${t.name}</span>
+                    <span class="template-desc">${t.description || t.actorType}</span>
+                </div>
+                <div class="template-actions">
+                    <button type="button" class="btn btn-sm" data-manage-action="duplicate" data-tpl-id="${t.id}" title="Duplicate">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-danger" data-manage-action="delete" data-tpl-id="${t.id}" title="Delete">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+
+        const content = `
+            <div class="template-manager">${templateListHTML}</div>
+            <hr/>
+            <div class="btn-row" style="margin-top:0.5rem;">
+                <button type="button" class="btn btn-sm" id="tpl-export-btn"><i class="fas fa-download"></i> Export All</button>
+                <button type="button" class="btn btn-sm" id="tpl-import-btn"><i class="fas fa-upload"></i> Import</button>
+            </div>
+        `;
+
+        const dlg = new Dialog({
+            title: 'Manage Templates',
+            content,
+            buttons: { close: { label: 'Close' } },
+            render: (dialogHtml: any) => {
+                dialogHtml.find('[data-manage-action="delete"]').on('click', async (ev: any) => {
+                    const id = ev.currentTarget.dataset.tplId;
+                    const confirmed = await Dialog.confirm({ title: 'Delete Template', content: '<p>Remove this template?</p>' });
+                    if (!confirmed) return;
+                    await game.aiGM?.templateService?.remove(id);
+                    dlg.close();
+                    this._onManageTemplates();
+                    this.render(false);
+                });
+                dialogHtml.find('[data-manage-action="duplicate"]').on('click', async (ev: any) => {
+                    const id = ev.currentTarget.dataset.tplId;
+                    await game.aiGM?.templateService?.duplicate(id);
+                    dlg.close();
+                    this._onManageTemplates();
+                    this.render(false);
+                });
+                dialogHtml.find('#tpl-export-btn').on('click', () => {
+                    const json = game.aiGM?.templateService?.exportTemplates() ?? '[]';
+                    navigator.clipboard.writeText(json);
+                    ui.notifications.info('Templates copied to clipboard.');
+                });
+                dialogHtml.find('#tpl-import-btn').on('click', () => {
+                    const importContent = '<div class="form-group"><label>Paste JSON</label><textarea id="tpl-import-json" rows="6" style="width:100%;"></textarea></div>';
+                    new Dialog({
+                        title: 'Import Templates',
+                        content: importContent,
+                        buttons: {
+                            import: {
+                                label: 'Import',
+                                callback: async (importHtml: any) => {
+                                    const json = importHtml.find('#tpl-import-json').val()?.trim();
+                                    if (!json) return;
+                                    const count = await game.aiGM?.templateService?.importTemplates(json) ?? 0;
+                                    ui.notifications.info(`Imported ${count} template(s).`);
+                                    dlg.close();
+                                    this._onManageTemplates();
+                                    this.render(false);
+                                }
+                            },
+                            cancel: { label: 'Cancel' }
+                        }
+                    }).render(true);
+                });
+            }
+        });
+        dlg.render(true);
+    }
+
+    private _onWizardPrev(): void {
+        const wizard = game.aiGM?.wizardService;
+        if (wizard?.goPrev()) {
+            this.render(false);
+        }
+    }
+
+    private _onWizardNext(): void {
+        const wizard = game.aiGM?.wizardService;
+        if (!wizard) return;
+
+        // Sync current UI state into wizard before advancing
+        wizard.setActorType(this.selectedActorType);
+        wizard.setSelectedFields(this.selectedFields);
+
+        const html = this.element;
+        const prompt = html.find('#gm-char-prompt').val()?.trim() || '';
+        wizard.setPrompt(prompt);
+
+        const lang = html.find('#gm-char-lang').val() || 'en';
+        wizard.setLanguage(lang);
+
+        if (wizard.goNext()) {
+            this.render(false);
+        }
+    }
+
+    private _renderCharacterPreview(container: any): void {
+        if (!this.characterData) {
+            container.html('');
+            return;
+        }
+
+        const wizard = game.aiGM?.wizardService;
+        const preview = wizard?.buildPreview(this.characterData, this.actorFields);
+        if (!preview) {
+            container.html('');
+            return;
+        }
+        this.characterPreview = preview;
+
+        // Build actor fields grid
+        const fieldsHTML = preview.actor.editableFields.slice(0, 30).map((f: EditableField) => `
+            <div class="preview-field ${f.modified ? 'modified' : ''}">
+                <label>${this._escapeHtml(f.label)}</label>
+                <input type="${f.type === 'number' ? 'number' : 'text'}"
+                       class="preview-edit-field"
+                       data-field-path="${f.path}"
+                       value="${f.value ?? ''}"
+                       ${f.min !== undefined ? `min="${f.min}"` : ''}
+                       ${f.max !== undefined ? `max="${f.max}"` : ''} />
+            </div>
+        `).join('');
+
+        // Build items list
+        const itemsHTML = preview.items.length > 0
+            ? preview.items.map((item: {name: string; type: string; editableFields: EditableField[]}) => `
+                <div class="preview-item">
+                    <div class="item-header">
+                        <span>${this._escapeHtml(item.name)}</span>
+                        <span class="item-type-badge">${this._escapeHtml(item.type)}</span>
+                    </div>
+                </div>
+            `).join('')
+            : '<p class="hint">No items generated.</p>';
+
+        // Validation warnings
+        let warningsHTML = '';
+        if (preview.validationErrors.length > 0) {
+            warningsHTML = `<div class="validation-warnings"><strong>Warnings:</strong><ul>${
+                preview.validationErrors.map((e: ValidationError) => `<li>${e.field}: ${e.message}</li>`).join('')
+            }</ul></div>`;
+        }
+
+        container.html(`
+            <div class="char-preview-card">
+                <div class="preview-header">
+                    <img src="${preview.actor.img}" alt="Character" />
+                    <div class="preview-name">
+                        <input type="text" class="preview-name-input" value="${this._escapeHtml(preview.actor.name)}" />
+                        <span class="hint">${preview.actor.type}</span>
+                    </div>
+                </div>
+                ${warningsHTML}
+                <div class="preview-fields">${fieldsHTML}</div>
+                <div class="preview-items-section">
+                    <h5><i class="fas fa-briefcase"></i> Items (${preview.items.length})</h5>
+                    ${itemsHTML}
+                </div>
+                <div class="btn-row" style="margin-top:0.5rem;">
+                    <button type="button" class="btn btn-success btn-block" data-action="create-from-preview">
+                        <i class="fas fa-user-plus"></i> Create in Foundry
+                    </button>
+                    <button type="button" class="btn" data-action="export-json">
+                        <i class="fas fa-download"></i> JSON
+                    </button>
+                </div>
+            </div>
+        `);
+    }
+
+    private _onPreviewFieldEdit(ev: any): void {
+        if (!this.characterPreview) return;
+        const path = ev.currentTarget.dataset.fieldPath;
+        const newValue = ev.currentTarget.type === 'number'
+            ? parseFloat(ev.currentTarget.value) || 0
+            : ev.currentTarget.value;
+
+        for (const field of this.characterPreview.actor.editableFields) {
+            if (field.path === path) {
+                field.value = newValue;
+                field.modified = field.value !== field.originalValue;
+                break;
+            }
+        }
+
+        // Mark modified fields visually
+        const fieldDiv = ev.currentTarget.closest('.preview-field');
+        if (fieldDiv) {
+            const field = this.characterPreview.actor.editableFields.find(f => f.path === path);
+            fieldDiv.classList.toggle('modified', field?.modified ?? false);
+        }
+    }
+
+    private _onPreviewNameEdit(ev: any): void {
+        if (!this.characterPreview) return;
+        this.characterPreview.actor.name = ev.currentTarget.value;
+    }
+
+    private async _onCreateFromPreview(): Promise<void> {
+        if (!this.characterPreview || !this.characterData) {
+            return ui.notifications.warn('Generate a character first.');
+        }
+
+        // Apply edits from preview back to character data
+        const wizard = game.aiGM?.wizardService;
+        if (wizard && this.characterPreview) {
+            const edited = wizard.applyEdits(this.characterPreview);
+            if (edited) {
+                edited.actor.name = this.characterPreview.actor.name;
+                this.characterData = edited;
+            }
+        }
+
+        // Delegate to the existing create flow
+        await this._onCreateCharacter();
+    }
+
+    private _escapeHtml(text: string): string {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+
+    /* ================================================================== */
     /*  ITEMS TAB                                                          */
     /* ================================================================== */
 
@@ -1013,6 +1430,8 @@ export class AIGameMasterPanel extends Application {
         const html = this.element;
         const prompt: string = html.find('#gm-item-prompt').val()?.trim();
         const packId: string = html.find('#gm-item-pack').val();
+        const typeFilter: string = html.find('#gm-item-type-filter').val() || '';
+        const itemCount: number = parseInt(html.find('#gm-item-count').val()) || 3;
 
         if (!prompt) return ui.notifications.warn('Enter an item description.');
         if (!packId) return ui.notifications.warn('Select a compendium pack.');
@@ -1022,8 +1441,19 @@ export class AIGameMasterPanel extends Application {
 
         const requestId = `${ws.getSessionId()}-${Date.now()}`;
         const ext = game.aiGM?.blueprintGenerator?.schemaExtractor;
-        const validItemTypes = ext?.getItemTypes() ?? [];
-        ws.generateItems(prompt, { packId, requestId, validItemTypes });
+        let validItemTypes = ext?.getItemTypes() ?? [];
+
+        // Apply type filter if set
+        if (typeFilter) {
+            validItemTypes = validItemTypes.filter((t: string) => t === typeFilter);
+        }
+
+        // Augment prompt with count hint
+        const augmentedPrompt = itemCount > 1
+            ? `${prompt}\n\n[Generate exactly ${itemCount} items.]`
+            : prompt;
+
+        ws.generateItems(augmentedPrompt, { packId, requestId, validItemTypes });
         ui.notifications.info('Item generation sent…');
     }
 
@@ -1358,14 +1788,7 @@ export class AIGameMasterPanel extends Application {
         container.html(rows.join(''));
     }
 
-    private _escapeHtml(text: string): string {
-        return String(text)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
+
 
     async close(options?: any): Promise<void> {
         if (this._controlTokenHookId !== null) {
