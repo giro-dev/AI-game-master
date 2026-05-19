@@ -8,7 +8,6 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -67,33 +66,24 @@ public class ConceptAgent {
         String systemId = request.getBlueprint().getSystemId();
         SystemProfileDto profile = resolveProfile(systemId);
 
-        // Build system context: profile-aware or fallback to RAG guidance
-        String systemContext;
+        // Build a slim system context for the concept step — no need for full
+        // field ranges, constraints, or reference character data here. The concept
+        // step only needs the system name, summary, and identity fields.
+        String slimContext;
         if (profile != null) {
-            systemContext = promptBuilder.buildSystemContext(profile);
+            slimContext = buildSlimSystemContext(profile);
         } else {
-            systemContext = getActorTypeGuidance(request.getActorType(), systemId);
-        }
-
-        // Inject reference character context if available
-        String referenceContext = "";
-        var refOpt = request.getReferenceCharacter() != null
-                ? java.util.Optional.of(request.getReferenceCharacter())
-                : systemProfileService.getReferenceCharacter(systemId, request.getActorType());
-        if (refOpt.isPresent()) {
-            referenceContext = promptBuilder.buildReferenceCharacterContext(refOpt.get(), "system");
-            log.info("Using reference character '{}' for core concept generation", refOpt.get().getLabel());
+            slimContext = getActorTypeGuidance(request.getActorType(), systemId);
         }
 
         String userPrompt = String.format(
-                "System: %s\nActor Type: %s\n\n%s\n\n%s\n\nUser Request: %s\n\n" +
+                "System: %s\nActor Type: %s\n\n%s\n\nUser Request: %s\n\n" +
                         "Create a character concept. " +
                         "IMPORTANT: Your response MUST be a JSON object with a \"name\" key (the character's name as a string). " +
                         "Do NOT omit the \"name\" key. Example: {\"name\": \"Character Name\", \"concept\": \"...\", ...}",
                 systemId,
                 request.getActorType(),
-                systemContext,
-                referenceContext,
+                slimContext,
                 request.getPrompt()
         );
 
@@ -107,11 +97,33 @@ public class ConceptAgent {
                 .call()
                 .content();
 
-        responseJson = cleanJsonResponse(responseJson);
         log.debug("Core concept raw response: {}", responseJson);
-        Map<String, Object> concept = objectMapper.readValue(responseJson, Map.class);
-        log.info("Core concept keys: {}, name='{}'", concept.keySet(), extractName(concept));
+        Map<String, Object> concept = LLMResponseUtils.parseJsonWithRetry(
+                responseJson, "{}", Map.class, chatClient, objectMapper, systemPrompt, userPrompt);
+        log.info("Core concept keys: {}, name='{}'", concept.keySet(), LLMResponseUtils.extractName(concept));
         return concept;
+    }
+
+    /**
+     * Build a minimal system context for the concept step — only system title, summary,
+     * and creation choices. Omits field ranges, constraints, and reference data
+     * to save tokens (the field filler will get the full context later).
+     */
+    private String buildSlimSystemContext(SystemProfileDto profile) {
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("=== GAME SYSTEM: ").append(profile.getSystemTitle())
+                .append(" (").append(profile.getSystemId()).append(") ===\n");
+        if (profile.getSystemSummary() != null) {
+            ctx.append("Description: ").append(profile.getSystemSummary()).append("\n");
+        }
+        if (profile.getCreationChoices() != null && !profile.getCreationChoices().isEmpty()) {
+            ctx.append("AVAILABLE CHOICES:\n");
+            for (var entry : profile.getCreationChoices().entrySet()) {
+                ctx.append("- ").append(entry.getKey()).append(": ")
+                        .append(String.join(", ", entry.getValue())).append("\n");
+            }
+        }
+        return ctx.toString();
     }
 
     private SystemProfileDto resolveProfile(String systemId) {
@@ -130,41 +142,5 @@ public class ConceptAgent {
         }
     }
 
-    private String cleanJsonResponse(String response) {
-        if (response == null) return "{}";
-        response = response.trim();
-        if (response.startsWith("```json")) {
-            response = response.substring(7);
-        } else if (response.startsWith("```")) {
-            response = response.substring(3);
-        }
-        if (response.endsWith("```")) {
-            response = response.substring(0, response.length() - 3);
-        }
-        return response.trim();
-    }
 
-    /**
-     * Extract a reasonable name value from the concept map for logging.
-     */
-    private String extractName(Map<String, Object> coreConcept) {
-        List<String> candidateKeys = List.of(
-                "name", "nombre", "nom", "nome", "Name",
-                "character_name", "characterName",
-                "actor_name", "actorName"
-        );
-        for (String key : candidateKeys) {
-            Object val = coreConcept.get(key);
-            if (val instanceof String s && !s.isBlank()) {
-                return s;
-            }
-        }
-        // Fallback: any short non-blank string
-        for (Object val : coreConcept.values()) {
-            if (val instanceof String s && !s.isBlank() && s.length() < 60) {
-                return s;
-            }
-        }
-        return "AI Character";
-    }
 }

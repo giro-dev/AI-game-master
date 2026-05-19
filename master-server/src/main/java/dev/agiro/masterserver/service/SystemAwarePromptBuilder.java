@@ -255,6 +255,28 @@ public class SystemAwarePromptBuilder {
      * @param section  Which part to show: "system" (actor.system data), "items", or "all"
      * @return prompt context block
      */
+    /**
+     * Internal Foundry fields that are irrelevant for generation and waste tokens.
+     */
+    private static final Set<String> INTERNAL_FIELDS = Set.of(
+            "_id", "_key", "_stats", "flags", "ownership", "folder",
+            "sort", "permission", "_source", "effects"
+    );
+
+    /**
+     * Strip Foundry-internal keys from a map (shallow copy, non-recursive at top level).
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> stripInternalFields(Map<String, Object> data) {
+        if (data == null) return Map.of();
+        Map<String, Object> clean = new LinkedHashMap<>();
+        for (var entry : data.entrySet()) {
+            if (INTERNAL_FIELDS.contains(entry.getKey())) continue;
+            clean.put(entry.getKey(), entry.getValue());
+        }
+        return clean;
+    }
+
     public String buildReferenceCharacterContext(ReferenceCharacterDto ref, String section) {
         if (ref == null) return "";
 
@@ -264,14 +286,13 @@ public class SystemAwarePromptBuilder {
 
         try {
             if ("system".equals(section) || "all".equals(section)) {
-                // Extract only actor.system data (the part AI fills)
                 Map<String, Object> actorData = ref.getActorData();
                 if (actorData != null) {
                     Object systemData = actorData.get("system");
-                    if (systemData != null) {
-                        String systemJson = objectMapper.writerWithDefaultPrettyPrinter()
-                                .writeValueAsString(systemData);
-                        // Truncate if massive
+                    if (systemData instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> cleanSystem = stripInternalFields((Map<String, Object>) systemData);
+                        String systemJson = objectMapper.writeValueAsString(cleanSystem);
                         if (systemJson.length() > 6000) {
                             systemJson = systemJson.substring(0, 6000) + "\n... (truncated)";
                         }
@@ -285,23 +306,22 @@ public class SystemAwarePromptBuilder {
                 List<Map<String, Object>> items = ref.getItems();
                 if (items != null && !items.isEmpty()) {
                     ctx.append("REFERENCE embedded items (your generated items MUST use the same structure):\n");
-                    // Show up to 3 items as examples, one per distinct type
                     Set<String> seenTypes = new HashSet<>();
                     int shown = 0;
                     for (Map<String, Object> item : items) {
                         String type = (String) item.get("type");
                         if (type != null && seenTypes.contains(type)) continue;
                         if (type != null) seenTypes.add(type);
-                        
-                        String itemJson = objectMapper.writerWithDefaultPrettyPrinter()
-                                .writeValueAsString(item);
+
+                        Map<String, Object> cleanItem = stripInternalFields(item);
+                        String itemJson = objectMapper.writeValueAsString(cleanItem);
                         if (itemJson.length() > 2000) {
                             itemJson = itemJson.substring(0, 2000) + "\n... (truncated)";
                         }
                         ctx.append("Item example (type=").append(type).append("):\n");
                         ctx.append(itemJson).append("\n\n");
-                        
-                        if (++shown >= 5) break; // limit to 5 distinct types
+
+                        if (++shown >= 5) break;
                     }
                 }
             }
@@ -359,7 +379,8 @@ public class SystemAwarePromptBuilder {
             if (!examples.isEmpty()) {
                 ctx.append("  Structural example (use same field names and value types):\n");
                 try {
-                    String json = objectMapper.writeValueAsString(examples.get(0));
+                    Map<String, Object> cleanExample = stripInternalFields(examples.get(0));
+                    String json = objectMapper.writeValueAsString(cleanExample);
                     if (json.length() > 1200) json = json.substring(0, 1200) + "... (truncated)";
                     ctx.append("  ").append(json.replace("\n", "\n  ")).append("\n");
                 } catch (Exception e) {
@@ -395,8 +416,8 @@ public class SystemAwarePromptBuilder {
         try {
             for (var entry : typeExamples.entrySet()) {
                 ctx.append("\nType \"").append(entry.getKey()).append("\":\n");
-                String json = objectMapper.writerWithDefaultPrettyPrinter()
-                        .writeValueAsString(entry.getValue());
+                Map<String, Object> cleanItem = stripInternalFields(entry.getValue());
+                String json = objectMapper.writeValueAsString(cleanItem);
                 if (json.length() > 1500) json = json.substring(0, 1500) + "...";
                 ctx.append(json).append("\n");
             }

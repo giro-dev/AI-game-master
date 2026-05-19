@@ -727,12 +727,15 @@ export class AIGameMasterPanel extends Application {
                 if (matchKey === null) continue;
 
                 const aiValue = map[matchKey];
+                // Determine the correct field path by inspecting the item's own system data
+                const targetPath = this._resolveItemValuePath(item);
+
                 if (typeof aiValue === 'number') {
-                    updates.push({ _id: item.id, 'system.value': aiValue });
-                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey} = ${aiValue}`);
+                    updates.push({ _id: item.id, [targetPath]: aiValue });
+                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey} = ${aiValue} (via ${targetPath})`);
                 } else if (typeof aiValue === 'object' && aiValue !== null && 'value' in aiValue) {
-                    updates.push({ _id: item.id, 'system.value': aiValue.value });
-                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey}.value = ${aiValue.value}`);
+                    updates.push({ _id: item.id, [targetPath]: aiValue.value });
+                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey}.value = ${aiValue.value} (via ${targetPath})`);
                 }
                 break; // matched – no need to check other maps
             }
@@ -929,20 +932,76 @@ export class AIGameMasterPanel extends Application {
                 .replace(/[^a-z0-9]/g, '');                        // strip non-alphanumeric
 
         const itemName = norm(item.name || '');
-        // Also try the item's internal identifier if available
         const itemId = norm(item.system?.identifier || item.flags?.core?.sourceId || '');
 
+        // Pass 1: exact normalized match (highest confidence)
         for (const key of keys) {
             const nk = norm(key);
             if (!nk) continue;
-            // Exact normalized match
-            if (nk === itemName || nk === itemId) return key;
-            // Substring match (e.g. item "F. Física" → "ffisica")
-            if (itemName.includes(nk) || nk.includes(itemName)) return key;
-            if (itemId && (itemId.includes(nk) || nk.includes(itemId))) return key;
+            if (nk === itemName || (itemId && nk === itemId)) return key;
+        }
+
+        // Pass 2: substring match only when both sides are long enough to
+        // avoid false positives like "art" matching "martial_arts" or
+        // "con" matching "constitution".
+        const MIN_SUBSTR_LEN = 4;
+        for (const key of keys) {
+            const nk = norm(key);
+            if (!nk || nk.length < MIN_SUBSTR_LEN) continue;
+
+            if (itemName.length >= MIN_SUBSTR_LEN) {
+                // Only allow the shorter string to be a substring of the longer
+                // when the shorter is at least 60% of the longer's length
+                if (itemName.includes(nk) && nk.length >= itemName.length * 0.6) return key;
+                if (nk.includes(itemName) && itemName.length >= nk.length * 0.6) return key;
+            }
+
+            if (itemId && itemId.length >= MIN_SUBSTR_LEN) {
+                if (itemId.includes(nk) && nk.length >= itemId.length * 0.6) return key;
+                if (nk.includes(itemId) && itemId.length >= nk.length * 0.6) return key;
+            }
         }
 
         return null;
+    }
+
+    /**
+     * Determine the correct system field path for writing a numeric value to an
+     * embedded Item. Inspects the item's own system data instead of assuming
+     * `system.value` (which is wrong for CoC7, D&D5e, and others).
+     *
+     * Precedence:
+     *  1. system.value           – Hitos, generic
+     *  2. system.adjustments.experience.value – CoC7 skills
+     *  3. system.proficient      – D&D5e proficiency flag
+     *  4. system.value (default)
+     */
+    private _resolveItemValuePath(item: any): string {
+        const sys = item.system;
+        if (!sys || typeof sys !== 'object') return 'system.value';
+
+        // Check for CoC7-style adjustments
+        if (sys.adjustments && typeof sys.adjustments === 'object') {
+            if (sys.adjustments.experience && typeof sys.adjustments.experience === 'object' && 'value' in sys.adjustments.experience) {
+                return 'system.adjustments.experience.value';
+            }
+            if (sys.adjustments.personal && typeof sys.adjustments.personal === 'object' && 'value' in sys.adjustments.personal) {
+                return 'system.adjustments.personal.value';
+            }
+        }
+
+        // D&D5e: proficiency boolean
+        if ('proficient' in sys && typeof sys.proficient === 'number') {
+            return 'system.proficient';
+        }
+
+        // systems that use system.base
+        if ('base' in sys && typeof sys.base === 'number' && !('value' in sys)) {
+            return 'system.base';
+        }
+
+        // Default: system.value (Hitos, many generic systems)
+        return 'system.value';
     }
 
     /**

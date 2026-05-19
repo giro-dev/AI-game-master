@@ -12,6 +12,7 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -43,7 +44,7 @@ public class ItemGenerationAgent {
         this.chatClient = chatClientBuilder
                 .defaultOptions(ChatOptions.builder()
                         .model("gpt-4o-mini")
-                        .temperature(0.8)
+                        .temperature(0.6)
                         .build())
                 .build();
         this.objectMapper = objectMapper;
@@ -90,21 +91,43 @@ public class ItemGenerationAgent {
 
         List<CreateCharacterResponse.ItemDto> allItems = new ArrayList<>();
 
-        // ── Pass A: mandatory character-definition items ──────────────────
-        if (hasReference && !requiredItemTypes.isEmpty()) {
-            log.info("Pass A — generating {} required CDI type(s)", requiredItemTypes.size());
-            List<CreateCharacterResponse.ItemDto> cdiItems = generateRequiredItems(
-                    coreConcept, request, language, refOpt.get(), requiredItemTypes, profile);
+        // Launch Pass A and Pass B in parallel when both are needed
+        boolean runPassA = hasReference && !requiredItemTypes.isEmpty();
+        boolean runPassB = !equipmentTypes.isEmpty();
+
+        CompletableFuture<List<CreateCharacterResponse.ItemDto>> passAFuture = null;
+        CompletableFuture<List<CreateCharacterResponse.ItemDto>> passBFuture = null;
+
+        if (runPassA) {
+            final ReferenceCharacterDto ref = refOpt.get();
+            log.info("Pass A — generating {} required CDI type(s) (async)", requiredItemTypes.size());
+            passAFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return generateRequiredItems(coreConcept, request, language, ref, requiredItemTypes, profile);
+                } catch (Exception e) {
+                    log.error("Pass A failed: {}", e.getMessage(), e);
+                    return List.<CreateCharacterResponse.ItemDto>of();
+                }
+            });
+        }
+
+        if (runPassB) {
+            final ReferenceCharacterDto refForB = hasReference ? refOpt.get() : null;
+            final String ctx = itemContext;
+            log.info("Pass B — generating optional equipment for {} type(s) (async)", equipmentTypes.size());
+            passBFuture = CompletableFuture.supplyAsync(() ->
+                    generateEquipmentItems(coreConcept, request, language, equipmentTypes, ctx, profile, refForB)
+            );
+        }
+
+        // Collect results
+        if (passAFuture != null) {
+            List<CreateCharacterResponse.ItemDto> cdiItems = passAFuture.join();
             allItems.addAll(cdiItems);
             log.info("Pass A produced {} CDI items", cdiItems.size());
         }
-
-        // ── Pass B: optional equipment items ─────────────────────────────
-        if (!equipmentTypes.isEmpty()) {
-            log.info("Pass B — generating optional equipment for {} type(s)", equipmentTypes.size());
-            List<CreateCharacterResponse.ItemDto> equipItems = generateEquipmentItems(
-                    coreConcept, request, language, equipmentTypes, itemContext, profile,
-                    hasReference ? refOpt.get() : null);
+        if (passBFuture != null) {
+            List<CreateCharacterResponse.ItemDto> equipItems = passBFuture.join();
             allItems.addAll(equipItems);
             log.info("Pass B produced {} equipment items", equipItems.size());
         }
@@ -159,7 +182,7 @@ public class ItemGenerationAgent {
                 .call()
                 .content();
 
-        responseJson = cleanJsonResponse(responseJson);
+        responseJson = LLMResponseUtils.cleanJsonResponse(responseJson, "[]");
         if (!responseJson.trim().startsWith("[")) {
             responseJson = "[" + responseJson + "]";
         }
@@ -221,7 +244,7 @@ public class ItemGenerationAgent {
                     .call()
                     .content();
 
-            responseJson = cleanJsonResponse(responseJson);
+            responseJson = LLMResponseUtils.cleanJsonResponse(responseJson, "[]");
             if (!responseJson.trim().startsWith("[")) {
                 responseJson = "[" + responseJson + "]";
             }
@@ -284,7 +307,7 @@ public class ItemGenerationAgent {
                 .call()
                 .content();
 
-        responseJson = cleanJsonResponse(responseJson);
+        responseJson = LLMResponseUtils.cleanJsonResponse(responseJson, "[]");
         log.debug("Legacy items response: {}", responseJson);
 
         @SuppressWarnings("unchecked")
@@ -351,17 +374,5 @@ public class ItemGenerationAgent {
         return systemProfileService.getProfile(systemId).orElse(null);
     }
 
-    private String cleanJsonResponse(String response) {
-        if (response == null) return "[]";
-        response = response.trim();
-        if (response.startsWith("```json")) {
-            response = response.substring(7);
-        } else if (response.startsWith("```")) {
-            response = response.substring(3);
-        }
-        if (response.endsWith("```")) {
-            response = response.substring(0, response.length() - 3);
-        }
-        return response.trim();
-    }
+
 }
