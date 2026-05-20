@@ -32,6 +32,23 @@ declare class Application {
     getData(_options?: any): Promise<any> | any;
     activateListeners(html: any): void;
     render(force?: boolean, options?: any): this;
+    close(options?: any): Promise<void>;
     options: any;
 }
 
+/* ── game.aiGM shape ── */
+interface AiGmNamespace {
+    blueprintGenerator: any;
+    wsClient: any;
+    snapshotSender: any;
+    postProcessor: any;
+    skillRegistry: any;
+    // Individual popup applications
+    generateApp: any;
+    sessionApp: any;
+    libraryApp: any;
+    configApp: any;
+    featuresApp: any;
+    /** Legacy: open the popup that matches the given tab name. */
+    open(tab?: string): void;
+}

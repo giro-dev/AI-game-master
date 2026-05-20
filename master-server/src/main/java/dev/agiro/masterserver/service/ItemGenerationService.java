@@ -1,16 +1,13 @@
 package dev.agiro.masterserver.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.ItemGenerationRequest;
 import dev.agiro.masterserver.dto.ItemGenerationResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -19,23 +16,18 @@ import java.util.Map;
 public class ItemGenerationService {
 
     private final ChatClient chatClient;
-    private final ObjectMapper objectMapper;
     private final RAGService ragService;
 
     @Value("classpath:/prompts/item_generation_system.txt")
     private Resource itemGenerationPrompt;
 
     public ItemGenerationService(ChatClient.Builder chatClientBuilder,
-                                 ObjectMapper objectMapper,
-                                 RAGService ragService) {
+                                 RAGService ragService,
+                                 ModelRoutingService modelRoutingService) {
 
         this.chatClient = chatClientBuilder
-                .defaultOptions(ChatOptions.builder()
-                        .model("gpt-4o-mini")
-                        .temperature(0.7)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("item-generator"))
                 .build();
-        this.objectMapper = objectMapper;
         this.ragService = ragService;
     }
 
@@ -52,23 +44,17 @@ public class ItemGenerationService {
 
         try {
             String userPrompt = buildPrompt(request);
-            String aiJson = chatClient.prompt()
+            GeneratedItemsResponse aiResponse = chatClient.prompt()
                     .system(sp -> sp.text(itemGenerationPrompt)
                             .param("language", "en"))
                     .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt))
                     .call()
-                    .content();
+                    .entity(GeneratedItemsResponse.class);
 
-            aiJson = cleanJson(aiJson);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> aiResponse = objectMapper.readValue(aiJson, Map.class);
-
-            List<Map<String, Object>> items = new ArrayList<>();
-            if (aiResponse.get("items") instanceof List) {
-                items.addAll((List<Map<String, Object>>) aiResponse.get("items"));
+            if (aiResponse != null) {
+                response.setItems(aiResponse.items() != null ? aiResponse.items() : List.of());
+                response.setReasoning(aiResponse.reasoning() != null ? aiResponse.reasoning() : "");
             }
-            response.setItems(items);
-            response.setReasoning((String) aiResponse.getOrDefault("reasoning", ""));
             response.setSuccess(true);
             return response;
         } catch (Exception e) {
@@ -78,6 +64,9 @@ public class ItemGenerationService {
             return response;
         }
     }
+
+    /** Structured output record matching the LLM's expected JSON shape. */
+    private record GeneratedItemsResponse(List<Map<String, Object>> items, String reasoning) {}
 
     private String buildPrompt(ItemGenerationRequest request) {
         StringBuilder sb = new StringBuilder();
@@ -119,15 +108,4 @@ public class ItemGenerationService {
         return sb.toString();
     }
 
-    private String cleanJson(String raw) {
-        String trimmed = raw.trim();
-        if (trimmed.startsWith("```json") || trimmed.startsWith("```")) {
-            int first = trimmed.indexOf('\n');
-            int last = trimmed.lastIndexOf("```");
-            if (first >= 0 && last > first) {
-                return trimmed.substring(first + 1, last).trim();
-            }
-        }
-        return trimmed;
-    }
 }

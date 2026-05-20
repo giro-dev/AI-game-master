@@ -15,6 +15,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -59,6 +60,19 @@ public class GameMasterService {
         FilterExpressionBuilder.Op filter = b.eq("foundry_system", request.getFoundrySystem() != null ? request.getFoundrySystem() : "unknown");
         if (request.getWorldId() != null) {
             filter = b.and(filter, b.eq("world_id", request.getWorldId()));
+        }
+
+        // Apply chunk-type restriction when the client sends an allowedChunkTypes list.
+        // An empty / null list means "no restriction" (GM behaviour).
+        List<String> allowedChunkTypes = request.getAllowedChunkTypes();
+        if (allowedChunkTypes != null && !allowedChunkTypes.isEmpty()) {
+            // Build an OR expression: chunk_type IN (type1, type2, ...)
+            FilterExpressionBuilder.Op chunkFilter = null;
+            for (String chunkType : allowedChunkTypes) {
+                FilterExpressionBuilder.Op term = b.eq("chunk_type", chunkType);
+                chunkFilter = chunkFilter == null ? term : b.or(chunkFilter, term);
+            }
+            filter = b.and(filter, chunkFilter);
         }
 
         QuestionAnswerAdvisor ragAdvisor = QuestionAnswerAdvisor.builder(vectorStore)

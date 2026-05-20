@@ -1,0 +1,47 @@
+<div class="ai-gm-panel">
+  <p class="hint">Ask the AI Game Master anything — rules questions, narration help, action resolution.</p>
+  <div class="selected-tokens-widget">
+    <div class="selected-tokens-header">
+      <label>
+        <input type="checkbox" id="gm-include-tokens" checked>
+        <i class="fas fa-users"></i> Include tokens
+      </label>
+    </div>
+    <div class="token-section">
+      <div class="token-section-title"><i class="fas fa-mouse-pointer"></i> Canvas selection</div>
+      <div class="selected-tokens-list" id="gm-selected-tokens">
+        <span class="empty-state">No tokens selected on canvas</span>
+      </div>
+    </div>
+    <div class="token-section">
+      <div class="token-section-title"><i class="fas fa-list"></i> Scene tokens</div>
+      <div class="scene-tokens-actions">
+        <button type="button" class="btn" data-action="sync-tokens"><i class="fas fa-sync"></i> Use canvas selection</button>
+        <button type="button" class="btn" data-action="clear-tokens"><i class="fas fa-times"></i> Clear</button>
+      </div>
+      <div class="scene-tokens-list" id="gm-scene-tokens">
+        <span class="empty-state">No scene loaded</span>
+      </div>
+      <p class="hint">Selection here is kept even if the canvas selection is cleared.</p>
+    </div>
+  </div>
+  <div class="chat-log" id="gm-chat-log">
+    {{#each chatHistory}}
+    <div class="chat-entry">
+      <span class="chat-sender">{{this.sender}}</span>
+      <div class="chat-text">{{{this.text}}}</div>
+    </div>
+    {{/each}}
+    {{#unless chatHistory.length}}
+    <p class="empty-state">No messages yet. Ask the AI something!</p>
+    {{/unless}}
+  </div>
+  <div class="form-group">
+    <textarea id="gm-session-prompt" rows="2" placeholder="Ask the AI Game Master..."></textarea>
+  </div>
+  <div class="btn-row">
+    <button type="button" class="btn btn-primary btn-block" data-action="ask-ai">
+      <i class="fas fa-paper-plane"></i> Ask AI
+    </button>
+  </div>
+</div>

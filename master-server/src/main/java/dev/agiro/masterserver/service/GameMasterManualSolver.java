@@ -5,8 +5,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.SystemPromptTemplate;
+import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,18 +35,18 @@ public class GameMasterManualSolver {
         this.chatMemory = chatMemory;
     }
 
-    public String solveDoubt(String query, String gameSystem){
+    public String solveDoubt(String query, String gameSystem) {
         return solveDoubt(query, gameSystem, null);
     }
 
-    public String solveDoubt(String query, String gameSystem, String conversationId){
+    @Tool(description = "Answer a tabletop RPG rules question by searching the uploaded game manuals. Use this when you need game-system-specific rules or guidance.")
+    public String solveDoubt(String query, String gameSystem, String conversationId) {
         QuestionAnswerAdvisor answerAdvisor = QuestionAnswerAdvisor.builder(vectorStore)
                 .searchRequest(SearchRequest.builder()
                         .similarityThreshold(0.4d)
                         .topK(6)
                         .filterExpression("foundry_system == '%s'".formatted(gameSystem))
                         .build())
-
                 .build();
 
         String convId = conversationId != null ? conversationId : "manual-" + gameSystem;
@@ -55,15 +54,16 @@ public class GameMasterManualSolver {
                 .conversationId(convId)
                 .build();
 
-        SystemPromptTemplate systemPromptTemplate = new SystemPromptTemplate(systemResource);
-        systemPromptTemplate.add("language",config.getChat().getDefaultLanguage());
-        ChatResponse response = chatClient.prompt()
+        String result = chatClient.prompt()
                 .advisors(answerAdvisor, memoryAdvisor)
-                .system(systemPromptTemplate.render())
+                .system(s -> s.text(systemResource).param("language", config.getChat().getDefaultLanguage()))
                 .user(u -> u.text("{query}").param("query", query))
                 .call()
-                .chatResponse();
-        assert response != null;
-        return response.getResult().getOutput().getText();
+                .content();
+
+        if (result == null || result.isBlank()) {
+            return "";
+        }
+        return result;
     }
 }

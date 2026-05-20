@@ -25,6 +25,12 @@
   "languages": [],
   "socket": false,
   "templates": [
-    "templates/ai-game-master-panel.hbs"
+    "templates/ai-game-master-panel.hbs",
+    "templates/generate-panel.hbs",
+    "templates/session-panel.hbs",
+    "templates/library-panel.hbs",
+    "templates/config-panel.hbs",
+    "templates/features-panel.hbs",
+    "templates/transcription-panel.hbs"
   ]
 }

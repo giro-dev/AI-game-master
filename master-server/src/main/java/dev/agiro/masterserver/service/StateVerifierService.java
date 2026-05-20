@@ -13,8 +13,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -88,18 +86,10 @@ public class StateVerifierService {
                         .filter(Objects::nonNull)
                         .collect(Collectors.joining(", "));
 
-        String systemPromptText;
-        try {
-            systemPromptText = systemPrompt.getContentAsString(StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            log.warn("Could not load state_verifier_system.txt: {}", e.getMessage());
-            return proposed;
-        }
-
         try {
             VerificationResult result = modelRoutingService.timed("state-verifier", session.getId(), () ->
                     chatClient.prompt()
-                            .system(systemPromptText)
+                            .system(s -> s.text(systemPrompt))
                             .user(u -> u.text(USER_TEMPLATE)
                                     .param("playerAction", playerAction == null ? "" : playerAction)
                                     .param("availableClueIds", availableClueIds)

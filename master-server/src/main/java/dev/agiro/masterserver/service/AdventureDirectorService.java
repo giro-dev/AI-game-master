@@ -16,6 +16,8 @@ import dev.agiro.masterserver.model.Scene;
 import dev.agiro.masterserver.repository.AdventureModuleRepository;
 import dev.agiro.masterserver.repository.AdventureSessionRepository;
 import dev.agiro.masterserver.model.AdventureSession;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.ai.chat.client.ChatClient;
@@ -48,6 +50,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class AdventureDirectorService {
 
     @Value("classpath:/prompts/adventure_director_system.txt")
@@ -79,54 +82,28 @@ public class AdventureDirectorService {
     private final PiperVoiceSelector piperVoiceSelector;
     private final AudioStoreService audioStoreService;
     private final SimpMessagingTemplate messagingTemplate;
-    private final ChatClient chatClient;
+    private final ChatClient.Builder chatClientBuilder;
     private final VectorStore vectorStore;
     private final ChatMemory chatMemory;
     private final ObjectMapper objectMapper;
     private final ModelRoutingService modelRoutingService;
     private final ModelRoutingProperties routingProperties;
     private final StateVerifierService stateVerifierService;
+    private final AdventureStateTool adventureStateTool;
     private final ExecutorService audioExecutor = Executors.newCachedThreadPool();
 
-    /** Pending unconfirmed turns, keyed by adventure session id. */
-    private final Map<String, IntentClassification> pendingIntents = new ConcurrentHashMap<>();
-    private final Map<String, String> pendingTranscriptions = new ConcurrentHashMap<>();
+    private ChatClient chatClient;
 
-    public AdventureDirectorService(AdventureModuleRepository adventureModuleRepository,
-                                    AdventureSessionRepository adventureSessionRepository,
-                                    IntentClassifierService intentClassifier,
-                                    RollDecisionService rollDecisionService,
-                                    SpeechSynthesisService ttsService,
-                                    AdventureSessionService adventureSessionService,
-                                    PiperVoiceSelector piperVoiceSelector,
-                                    AudioStoreService audioStoreService,
-                                    SimpMessagingTemplate messagingTemplate,
-                                    ChatClient.Builder chatClientBuilder,
-                                    VectorStore vectorStore,
-                                    ChatMemory chatMemory,
-                                    ObjectMapper objectMapper,
-                                    ModelRoutingService modelRoutingService,
-                                    ModelRoutingProperties routingProperties,
-                                    StateVerifierService stateVerifierService) {
-        this.adventureModuleRepository = adventureModuleRepository;
-        this.adventureSessionRepository = adventureSessionRepository;
-        this.intentClassifier = intentClassifier;
-        this.rollDecisionService = rollDecisionService;
-        this.ttsService = ttsService;
-        this.adventureSessionService = adventureSessionService;
-        this.piperVoiceSelector = piperVoiceSelector;
-        this.audioStoreService = audioStoreService;
-        this.messagingTemplate = messagingTemplate;
-        this.vectorStore = vectorStore;
-        this.chatMemory = chatMemory;
-        this.objectMapper = objectMapper;
-        this.modelRoutingService = modelRoutingService;
-        this.routingProperties = routingProperties;
-        this.stateVerifierService = stateVerifierService;
+    @PostConstruct
+    private void init() {
         this.chatClient = chatClientBuilder
                 .defaultOptions(modelRoutingService.optionsFor("director-stateful"))
                 .build();
     }
+
+    /** Pending unconfirmed turns, keyed by adventure session id. */
+    private final Map<String, IntentClassification> pendingIntents = new ConcurrentHashMap<>();
+    private final Map<String, String> pendingTranscriptions = new ConcurrentHashMap<>();
 
     public DirectorResponse process(DirectorRequest request) {
         if (request.getAdventureSessionId() == null) {
@@ -246,6 +223,7 @@ public class AdventureDirectorService {
                             .system(s -> s.text(directorSystemPrompt).params(systemParams))
                             .advisors(ragAdvisor, memoryAdvisor)
                             .user(u -> u.text(USER_TEMPLATE).params(userParams))
+                            .tools(rollDecisionService, adventureStateTool)
                             .call()
                             .entity(DirectorResponse.class));
         } catch (Exception e) {
