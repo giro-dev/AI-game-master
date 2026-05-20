@@ -60,18 +60,13 @@ export class GenerateApplication extends Application {
 
     private _wireSubtabs(html: any): void {
         const btnSel = '.ai-gm-subtabs .ai-gm-tab-btn, .ai-gm-subtabs .item';
-        const contents = html.find('.ai-gm-panel-body .ai-gm-subtab-content');
 
         const activate = (subtab: string): void => {
             html.find(btnSel).removeClass('active');
             html.find(`${btnSel.split(',').map(s => `${s.trim()}[data-subtab="${subtab}"]`).join(',')}`).addClass('active');
-            // Use jQuery show/hide so inline styles override any CSS conflicts
-            contents.hide();
-            html.find(`.ai-gm-subtab-content[data-subtab-content="${subtab}"]`).show();
+            html.find('.ai-gm-subtab-content').removeClass('active');
+            html.find(`.ai-gm-subtab-content[data-subtab-content="${subtab}"]`).addClass('active');
         };
-
-        // Hide all content first so initial state is clean regardless of HTML classes
-        contents.hide();
 
         html.find(btnSel).off('click.subtabs').on('click.subtabs', (ev: any) => {
             ev.preventDefault();
@@ -79,7 +74,6 @@ export class GenerateApplication extends Application {
             if (subtab) activate(subtab);
         });
 
-        // Activate the tab marked active in the HTML, or the first one
         const activeBtn = html.find(`${btnSel.split(',').map(s => `${s.trim()}.active`).join(',')}`).first();
         const init = activeBtn.length
             ? String(activeBtn.data('subtab'))

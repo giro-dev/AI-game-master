@@ -55,16 +55,13 @@ export class ConfigApplication extends Application {
 
     private _wireSubtabs(html: any): void {
         const btnSel = '.ai-gm-subtabs .ai-gm-tab-btn, .ai-gm-subtabs .item';
-        const contents = html.find('.ai-gm-panel-body .ai-gm-subtab-content');
 
         const activate = (subtab: string): void => {
             html.find(btnSel).removeClass('active');
             html.find(`${btnSel.split(',').map((s: string) => `${s.trim()}[data-subtab="${subtab}"]`).join(',')}`).addClass('active');
-            contents.hide();
-            html.find(`.ai-gm-subtab-content[data-subtab-content="${subtab}"]`).show();
+            html.find('.ai-gm-subtab-content').removeClass('active');
+            html.find(`.ai-gm-subtab-content[data-subtab-content="${subtab}"]`).addClass('active');
         };
-
-        contents.hide();
 
         html.find(btnSel).off('click.subtabs').on('click.subtabs', (ev: any) => {
             ev.preventDefault();
