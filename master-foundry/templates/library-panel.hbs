@@ -1,0 +1,64 @@
+<div class="ai-gm-panel">
+  <h4 class="section-header">Upload a Book</h4>
+  <div class="form-group">
+    <label for="gm-book-title">Book Title</label>
+    <input type="text" id="gm-book-title" placeholder="e.g. Player's Handbook" />
+  </div>
+  <div class="form-group">
+    <label for="gm-book-file">PDF File</label>
+    <input type="file" id="gm-book-file" accept=".pdf" />
+  </div>
+  <div class="btn-row">
+    <button type="button" class="btn btn-primary btn-block" data-action="upload-book">
+      <i class="fas fa-upload"></i> Upload &amp; Ingest
+    </button>
+  </div>
+  <h4 class="section-header">Ingest a Compendium</h4>
+  <div class="form-group">
+    <label for="gm-knowledge-pack">Compendium</label>
+    <select id="gm-knowledge-pack">
+      {{#each knowledgePacks}}
+      <option value="{{this.id}}">{{this.label}} ({{this.documentName}})</option>
+      {{/each}}
+      {{#unless knowledgePacks.length}}
+      <option value="" disabled>No compendiums available</option>
+      {{/unless}}
+    </select>
+    <p class="hint">Index a Foundry compendium as RAG knowledge for this world.</p>
+  </div>
+  <div class="btn-row">
+    <button type="button" class="btn btn-primary btn-block" data-action="ingest-compendium">
+      <i class="fas fa-database"></i> Ingest Compendium
+    </button>
+  </div>
+  <div class="progress-container" id="ingest-progress">
+    <div class="progress-status">
+      <i class="fas fa-spinner fa-spin"></i>
+      <span id="ingest-progress-text">Processing…</span>
+    </div>
+    <div class="progress-bar-track">
+      <div class="progress-bar-fill" id="ingest-progress-bar"></div>
+    </div>
+  </div>
+  <h4 class="section-header">Books in this World</h4>
+  <div class="book-list" id="gm-book-list">
+    {{#each books}}
+    <div class="book-entry" data-book-id="{{this.bookId}}">
+      <div>
+        <strong>{{this.displayTitle}}</strong>
+        <span class="book-meta">{{this.sourceLabel}}</span>
+        <span class="book-meta">{{this.status}}</span>
+        {{#if this.chunkCount}}
+        <span class="book-meta">({{this.chunkCount}} chunks, {{this.entityCount}} entities)</span>
+        {{/if}}
+      </div>
+      <button type="button" class="btn-danger" data-action="delete-book" data-book-id="{{this.bookId}}" title="Remove book">
+        <i class="fas fa-trash"></i>
+      </button>
+    </div>
+    {{/each}}
+    {{#unless books.length}}
+    <p class="empty-state">No books uploaded yet.</p>
+    {{/unless}}
+  </div>
+</div>

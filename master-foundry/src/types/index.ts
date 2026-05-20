@@ -379,6 +379,68 @@ export interface AdventureStateUpdatePayload {
     tensionDelta?: number;
 }
 
+// ── Character Template types ──
+
+export interface CharacterTemplate {
+    id: string;
+    name: string;
+    description: string;
+    actorType: string;
+    promptText: string;
+    selectedFields: string[];
+    language: string;
+    itemTypes: string[];
+    tags: string[];
+    createdAt: number;
+    updatedAt: number;
+}
+
+// ── Creation Wizard types ──
+
+export type CreationWizardStep = 'template' | 'fields' | 'prompt' | 'preview';
+
+export interface CreationWizardState {
+    currentStep: CreationWizardStep;
+    selectedTemplate: CharacterTemplate | null;
+    actorType: string;
+    selectedFields: Set<string>;
+    prompt: string;
+    language: string;
+    generatedData: CharacterData | null;
+    validationErrors: ValidationError[];
+    batchCount: number;
+    batchResults: CharacterData[];
+}
+
+// ── Preview/Edit types ──
+
+export interface EditableField {
+    path: string;
+    label: string;
+    type: string;
+    value: any;
+    originalValue: any;
+    min?: number;
+    max?: number;
+    choices?: any[];
+    modified: boolean;
+}
+
+export interface CharacterPreview {
+    actor: {
+        name: string;
+        type: string;
+        img: string;
+        editableFields: EditableField[];
+    };
+    items: Array<{
+        name: string;
+        type: string;
+        editableFields: EditableField[];
+    }>;
+    validationErrors: ValidationError[];
+}
+
 export interface AdventureSession {
     id: string;
     adventureModuleId: string;

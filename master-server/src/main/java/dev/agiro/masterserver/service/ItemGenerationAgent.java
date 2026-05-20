@@ -8,7 +8,7 @@ import dev.agiro.masterserver.dto.ReferenceCharacterDto;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -40,12 +40,10 @@ public class ItemGenerationAgent {
                                ObjectMapper objectMapper,
                                SystemProfileService systemProfileService,
                                SystemAwarePromptBuilder promptBuilder,
-                               RAGService ragService) {
+                               RAGService ragService,
+                               ModelRoutingService modelRoutingService) {
         this.chatClient = chatClientBuilder
-                .defaultOptions(ChatOptions.builder()
-                        .model("gpt-4o-mini")
-                        .temperature(0.6)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("item-generator"))
                 .build();
         this.objectMapper = objectMapper;
         this.systemProfileService = systemProfileService;
@@ -176,23 +174,18 @@ public class ItemGenerationAgent {
                 ? promptBuilder.buildItemGenerationPrompt(profile, language)
                 : FALLBACK_ITEMS_PROMPT.replace("{language}", language);
 
-        String responseJson = chatClient.prompt()
+        List<CreateCharacterResponse.ItemDto> items = chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt.toString()))
+                .tools(ragService)
                 .call()
-                .content();
+                .entity(new ParameterizedTypeReference<>() {});
 
-        responseJson = LLMResponseUtils.cleanJsonResponse(responseJson, "[]");
-        if (!responseJson.trim().startsWith("[")) {
-            responseJson = "[" + responseJson + "]";
+        if (items == null) {
+            return List.of();
         }
-        log.debug("CDI items response: {}", responseJson);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> itemMaps = objectMapper.readValue(responseJson, List.class);
-        return itemMaps.stream()
-                .map(m -> objectMapper.convertValue(m, CreateCharacterResponse.ItemDto.class))
-                .collect(Collectors.toList());
+        log.debug("CDI items count: {}", items.size());
+        return items;
     }
 
     // ── Pass B helper ─────────────────────────────────────────────────────
@@ -238,23 +231,18 @@ public class ItemGenerationAgent {
                     ? promptBuilder.buildItemGenerationPrompt(profile, language)
                     : FALLBACK_ITEMS_PROMPT.replace("{language}", language);
 
-            String responseJson = chatClient.prompt()
+            List<CreateCharacterResponse.ItemDto> items = chatClient.prompt()
                     .system(systemPrompt)
                     .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt.toString()))
+                    .tools(ragService)
                     .call()
-                    .content();
+                    .entity(new ParameterizedTypeReference<>() {});
 
-            responseJson = LLMResponseUtils.cleanJsonResponse(responseJson, "[]");
-            if (!responseJson.trim().startsWith("[")) {
-                responseJson = "[" + responseJson + "]";
+            if (items == null) {
+                return List.of();
             }
-            log.debug("Equipment items response: {}", responseJson);
-
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> itemMaps = objectMapper.readValue(responseJson, List.class);
-            return itemMaps.stream()
-                    .map(m -> objectMapper.convertValue(m, CreateCharacterResponse.ItemDto.class))
-                    .collect(Collectors.toList());
+            log.debug("Equipment items count: {}", items.size());
+            return items;
 
         } catch (Exception e) {
             log.warn("Optional equipment generation failed (non-fatal): {}", e.getMessage());
@@ -301,20 +289,18 @@ public class ItemGenerationAgent {
                 ? promptBuilder.buildItemGenerationPrompt(profile, language)
                 : FALLBACK_ITEMS_PROMPT.replace("{language}", language);
 
-        String responseJson = chatClient.prompt()
+        List<CreateCharacterResponse.ItemDto> items = chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt.toString()))
+                .tools(ragService)
                 .call()
-                .content();
+                .entity(new ParameterizedTypeReference<>() {});
 
-        responseJson = LLMResponseUtils.cleanJsonResponse(responseJson, "[]");
-        log.debug("Legacy items response: {}", responseJson);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> itemMaps = objectMapper.readValue(responseJson, List.class);
-        return itemMaps.stream()
-                .map(m -> objectMapper.convertValue(m, CreateCharacterResponse.ItemDto.class))
-                .collect(Collectors.toList());
+        if (items == null) {
+            return List.of();
+        }
+        log.debug("Legacy items count: {}", items.size());
+        return items;
     }
 
     // ── Utility helpers ───────────────────────────────────────────────────
@@ -373,6 +359,4 @@ public class ItemGenerationAgent {
     private SystemProfileDto resolveProfile(String systemId) {
         return systemProfileService.getProfile(systemId).orElse(null);
     }
-
-
 }

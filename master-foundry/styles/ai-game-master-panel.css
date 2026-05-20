@@ -47,6 +47,109 @@
   font-size: 0.9rem;
 }
 
+/* ─── Secondary Tabs (within a primary tab or standalone panel) ──────── */
+
+.ai-gm-panel .ai-gm-subtabs {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.08);
+  border-bottom: 2px solid var(--color-border-dark, #444);
+  flex-shrink: 0;
+}
+
+/* Use a unique class prefix to avoid conflicts with Foundry's .item styling */
+.ai-gm-panel .ai-gm-subtabs .ai-gm-tab-btn {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  margin-bottom: -2px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #666;
+  text-decoration: none !important;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+.ai-gm-panel .ai-gm-subtabs .ai-gm-tab-btn:hover {
+  color: #333;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.ai-gm-panel .ai-gm-subtabs .ai-gm-tab-btn.active {
+  color: #7b2fb5;
+  border-bottom-color: #7b2fb5;
+  background: transparent;
+}
+
+/* Legacy .item support for the old combined panel template */
+.ai-gm-panel .ai-gm-subtabs .item {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  margin-bottom: -2px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #666;
+  text-decoration: none !important;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.ai-gm-panel .ai-gm-subtabs .item:hover {
+  color: #333;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.ai-gm-panel .ai-gm-subtabs .item.active {
+  color: #7b2fb5;
+  border-bottom-color: #7b2fb5;
+  background: transparent;
+}
+
+/* Subtab content — jQuery show()/hide() drives visibility;
+   CSS provides the initial state. Use !important to win over
+   Foundry v14's high-specificity resets. */
+.ai-gm-panel .ai-gm-subtab-content {
+  display: none !important;
+}
+
+.ai-gm-panel .ai-gm-subtab-content.active {
+  display: block !important;
+}
+
+/* ─── Scrollable body for standalone popup panels ───────────────────── */
+
+.ai-gm-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+}
+
+/* Panels without subtabs: add padding directly */
+.ai-gm-panel-window .ai-gm-panel:not(:has(.ai-gm-subtabs)) {
+  padding: 0.75rem;
+}
+
 /* ─── Tab Content ──────────────────────────────────────────────────── */
 
 .ai-gm-panel .ai-gm-tab-content {
@@ -552,4 +655,122 @@
   color: #666;
   margin: 0;
   font-size: 0.75rem;
+}
+
+/* ─── Features Tab — Toggle List ───────────────────────────────────── */
+
+.ai-gm-panel .features-toggle-list {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.ai-gm-panel .feature-toggle-item {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.ai-gm-panel .feature-toggle-item:hover {
+  background: rgba(155, 89, 182, 0.06);
+  border-color: rgba(155, 89, 182, 0.35);
+}
+
+.ai-gm-panel .feature-toggle-item input[type="checkbox"] {
+  width: auto;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.ai-gm-panel .feature-toggle-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.85rem;
+}
+
+.ai-gm-panel .feature-toggle-label i {
+  margin-right: 0.35rem;
+  color: #7b2fb5;
+}
+
+.ai-gm-panel .feature-toggle-label .hint {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+/* ─── Role Access Control Table ─────────────────────────────────────── */
+
+.ai-gm-panel table.ai-gm-role-access-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid rgba(155, 89, 182, 0.25);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.82rem;
+  table-layout: fixed;
+}
+
+.ai-gm-panel table.ai-gm-role-access-table thead tr {
+  background: rgba(155, 89, 182, 0.12);
+}
+
+.ai-gm-panel table.ai-gm-role-access-table th {
+  padding: 0.4rem 0.5rem;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7b2fb5;
+  border-bottom: 1px solid rgba(155, 89, 182, 0.25);
+}
+
+.ai-gm-panel table.ai-gm-role-access-table td {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid rgba(155, 89, 182, 0.1);
+  vertical-align: middle;
+}
+
+.ai-gm-panel table.ai-gm-role-access-table tbody tr:hover {
+  background: rgba(155, 89, 182, 0.05);
+}
+
+.ai-gm-panel table.ai-gm-role-access-table .ai-gm-col-feature {
+  width: auto;
+  text-align: left;
+}
+
+.ai-gm-panel table.ai-gm-role-access-table .ai-gm-col-role {
+  width: 68px;
+  text-align: center;
+}
+
+.ai-gm-panel .ai-gm-role-cell-label {
+  display: flex !important;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.ai-gm-panel .ai-gm-role-checkbox {
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ai-gm-panel .ai-gm-role-checkbox:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

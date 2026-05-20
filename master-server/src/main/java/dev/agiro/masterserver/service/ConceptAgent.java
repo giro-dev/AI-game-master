@@ -1,13 +1,13 @@
 package dev.agiro.masterserver.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agiro.masterserver.dto.CreateCharacterRequest;
 import dev.agiro.masterserver.dto.SystemProfileDto;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,10 +21,10 @@ import java.util.Map;
 public class ConceptAgent {
 
     private final ChatClient chatClient;
-    private final ObjectMapper objectMapper;
     private final SystemProfileService systemProfileService;
     private final SystemAwarePromptBuilder promptBuilder;
     private final GameMasterManualSolver gameMasterManualSolver;
+    private final RAGService ragService;
 
     // Fallback prompt used only when no System Profile is available
     private static final String FALLBACK_CORE_CONCEPT_PROMPT = """
@@ -43,37 +43,47 @@ public class ConceptAgent {
             
             Language: {language}
             Be creative and evocative. This concept will be used to fill other fields.
+            Use the available tools to look up system-specific rules or guidance if needed.
             """;
 
     public ConceptAgent(ChatClient.Builder chatClientBuilder,
-                        ObjectMapper objectMapper,
                         SystemProfileService systemProfileService,
                         SystemAwarePromptBuilder promptBuilder,
-                        GameMasterManualSolver gameMasterManualSolver) {
+                        GameMasterManualSolver gameMasterManualSolver,
+                        RAGService ragService,
+                        ModelRoutingService modelRoutingService) {
         this.chatClient = chatClientBuilder
-                .defaultOptions(ChatOptions.builder()
-                        .model("gpt-4o-mini")
-                        .temperature(0.8)
-                        .build())
+                .defaultOptions(modelRoutingService.optionsFor("concept-agent"))
                 .build();
-        this.objectMapper = objectMapper;
         this.systemProfileService = systemProfileService;
         this.promptBuilder = promptBuilder;
         this.gameMasterManualSolver = gameMasterManualSolver;
+        this.ragService = ragService;
     }
 
     public Map<String, Object> generateCoreConcept(CreateCharacterRequest request, String language) throws Exception {
         String systemId = request.getBlueprint().getSystemId();
         SystemProfileDto profile = resolveProfile(systemId);
 
-        // Build a slim system context for the concept step — no need for full
-        // field ranges, constraints, or reference character data here. The concept
-        // step only needs the system name, summary, and identity fields.
+        // Build a slim system context for the concept step — only system title,
+        // summary, and creation choices. Omits field ranges, constraints, and
+        // reference data to save tokens. When no profile is available the LLM
+        // can query the manuals via the registered @Tool methods.
         String slimContext;
         if (profile != null) {
             slimContext = buildSlimSystemContext(profile);
         } else {
-            slimContext = getActorTypeGuidance(request.getActorType(), systemId);
+            slimContext = "";
+        }
+
+        // Inject reference character context if available
+        String referenceContext = "";
+        var refOpt = request.getReferenceCharacter() != null
+                ? java.util.Optional.of(request.getReferenceCharacter())
+                : systemProfileService.getReferenceCharacter(systemId, request.getActorType());
+        if (refOpt.isPresent()) {
+            referenceContext = promptBuilder.buildReferenceCharacterContext(refOpt.get(), "system");
+            log.info("Using reference character '{}' for core concept generation", refOpt.get().getLabel());
         }
 
         String userPrompt = String.format(
@@ -91,16 +101,17 @@ public class ConceptAgent {
                 ? promptBuilder.buildCoreConceptPrompt(profile, language)
                 : FALLBACK_CORE_CONCEPT_PROMPT.replace("{language}", language);
 
-        String responseJson = chatClient.prompt()
+        Map<String, Object> concept = chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("{userPrompt}").param("userPrompt", userPrompt))
+                .tools(ragService, gameMasterManualSolver)
                 .call()
-                .content();
+                .entity(new ParameterizedTypeReference<>() {});
 
-        log.debug("Core concept raw response: {}", responseJson);
-        Map<String, Object> concept = LLMResponseUtils.parseJsonWithRetry(
-                responseJson, "{}", Map.class, chatClient, objectMapper, systemPrompt, userPrompt);
-        log.info("Core concept keys: {}, name='{}'", concept.keySet(), LLMResponseUtils.extractName(concept));
+        if (concept == null) {
+            concept = Map.of();
+        }
+        log.info("Core concept keys: {}, name='{}'", concept.keySet(), extractName(concept));
         return concept;
     }
 
@@ -130,17 +141,28 @@ public class ConceptAgent {
         return systemProfileService.getProfile(systemId).orElse(null);
     }
 
-    private String getActorTypeGuidance(String actorType, String systemId) {
-        try {
-            return gameMasterManualSolver.solveDoubt(
-                    String.format("How do I create a %s in this game system? What are the rules and important considerations?", actorType),
-                    systemId
-            );
-        } catch (Exception e) {
-            log.warn("Failed to retrieve actor type guidance", e);
-            return "";
+    /**
+     * Extract a reasonable name value from the concept map.
+     * Used by this agent for logging and by CharacterGenerationService when assembling the response.
+     */
+    public String extractName(Map<String, Object> coreConcept) {
+        List<String> candidateKeys = List.of(
+                "name", "nombre", "nom", "nome", "Name",
+                "character_name", "characterName",
+                "actor_name", "actorName"
+        );
+        for (String key : candidateKeys) {
+            Object val = coreConcept.get(key);
+            if (val instanceof String s && !s.isBlank()) {
+                return s;
+            }
         }
+        // Fallback: any short non-blank string
+        for (Object val : coreConcept.values()) {
+            if (val instanceof String s && !s.isBlank() && s.length() < 60) {
+                return s;
+            }
+        }
+        return "AI Character";
     }
-
-
 }

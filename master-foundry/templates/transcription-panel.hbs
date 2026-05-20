@@ -1,0 +1,41 @@
+<div class="ai-gm-panel" style="padding:0.75rem;">
+  <h4 class="section-header">Voice Transcription</h4>
+  <p class="hint">Enable or disable voice transcription for live audio capture during game director sessions.</p>
+  <label class="feature-toggle-item">
+    <input type="checkbox" id="ai-gm-enable-transcription-standalone" {{#if enableTranscription}}checked{{/if}}>
+    <span class="feature-toggle-label">
+      <i class="fas fa-microphone"></i>
+      <strong>Enable Voice Transcription</strong>
+      <span class="hint">When enabled, a microphone button appears in the Game Director popup.</span>
+    </span>
+  </label>
+  <div class="profile-grid" style="margin-top:0.75rem;">
+    <div class="profile-card">
+      <h5>Status</h5>
+      {{#if enableTranscription}}
+      <span class="status-badge connected">Enabled</span>
+      {{else}}
+      <span class="status-badge disconnected">Disabled</span>
+      {{/if}}
+    </div>
+    <div class="profile-card">
+      <h5>Backend Server</h5>
+      <div class="value" style="font-size:0.8rem;">{{serverUrl}}</div>
+    </div>
+  </div>
+  <h4 class="section-header" style="margin-top:1rem;">About Transcription</h4>
+  <p class="hint">
+    When enabled, the Game Director popup shows a microphone button during active adventure sessions.
+    Speech is captured and sent to the AI Game Master as player input, allowing hands-free narration interaction.
+  </p>
+  <div class="profile-grid" style="margin-top:0.5rem;">
+    <div class="profile-card" style="grid-column: 1 / -1;">
+      <h5>Requirements</h5>
+      <ul style="margin:0.25rem 0 0 1.2rem; padding:0; font-size:0.82rem; line-height:1.6;">
+        <li>Backend server must be reachable at the URL above.</li>
+        <li>An active Game Director adventure session must be running.</li>
+        <li>Browser microphone permission must be granted.</li>
+      </ul>
+    </div>
+  </div>
+</div>
