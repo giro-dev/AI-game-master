@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -96,24 +98,37 @@ public class FieldFillerAgent {
             log.info("Using legacy field grouping: {} groups", fieldGroups.size());
         }
 
-        int groupIndex = 0;
         int totalGroups = fieldGroups.size();
 
+        // Launch all field groups in parallel
+        Map<String, CompletableFuture<Map<String, Object>>> futures = new java.util.LinkedHashMap<>();
+        int idx = 0;
         for (Map.Entry<String, List<CharacterBlueprintDto.FieldDto>> entry : fieldGroups.entrySet()) {
             String groupName = entry.getKey();
             List<CharacterBlueprintDto.FieldDto> fields = entry.getValue();
+            final int groupIdx = idx++;
 
-            int progress = 40 + (40 * groupIndex / Math.max(totalGroups, 1));
+            log.info("Launching parallel fill for group '{}' ({} fields)", groupName, fields.size());
+            futures.put(groupName, CompletableFuture.supplyAsync(() -> {
+                try {
+                    return fillFieldGroup(coreConcept, fields, systemContext, language, request);
+                } catch (Exception e) {
+                    log.error("Failed to fill group '{}': {}", groupName, e.getMessage(), e);
+                    return Map.<String, Object>of();
+                }
+            }));
+        }
+
+        // Collect results as they complete, reporting progress
+        int completed = 0;
+        for (Map.Entry<String, CompletableFuture<Map<String, Object>>> entry : futures.entrySet()) {
+            String groupName = entry.getKey();
             if (progressCallback != null) {
-                progressCallback.accept("Filling " + groupName + "...", progress);
+                progressCallback.accept("Filling " + groupName + "...", 40 + (40 * completed / Math.max(totalGroups, 1)));
             }
-
-            log.info("Filling field group '{}' with {} fields", groupName, fields.size());
-
-            Map<String, Object> groupValues = fillFieldGroup(coreConcept, fields, systemContext, language, request);
+            Map<String, Object> groupValues = entry.getValue().join();
             allSystemData.putAll(groupValues);
-
-            groupIndex++;
+            completed++;
         }
 
         return enforceConstraints(allSystemData, request, profile);
@@ -214,6 +229,27 @@ public class FieldFillerAgent {
                         int clamped = (int) Math.max(minVal, Math.min(maxVal, perField));
                         corrected.put(budgetFieldKeys.get(i), clamped);
                         runningTotal += clamped;
+                    }
+                }
+
+                // Diff-correction pass (same as currentTotal > 0 branch)
+                double zeroFinalTotal = budgetFieldKeys.stream()
+                        .mapToDouble(k -> ((Number) corrected.get(k)).doubleValue())
+                        .sum();
+                if (Math.abs(zeroFinalTotal - totalBudget) > 0.01) {
+                    int diff = (int) Math.round(totalBudget - zeroFinalTotal);
+                    for (String key : budgetFieldKeys) {
+                        if (diff == 0) break;
+                        int current = ((Number) corrected.get(key)).intValue();
+                        if (diff > 0 && current < maxVal) {
+                            int add = (int) Math.min(diff, maxVal - current);
+                            corrected.put(key, current + add);
+                            diff -= add;
+                        } else if (diff < 0 && current > minVal) {
+                            int sub = (int) Math.min(-diff, current - minVal);
+                            corrected.put(key, current - sub);
+                            diff += sub;
+                        }
                     }
                 }
             }

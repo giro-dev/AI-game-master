@@ -65,13 +65,15 @@ public class ConceptAgent {
         String systemId = request.getBlueprint().getSystemId();
         SystemProfileDto profile = resolveProfile(systemId);
 
-        // When a profile is available use it for deterministic context;
-        // otherwise the LLM can query the manuals via the registered @Tool methods.
-        String systemContext;
+        // Build a slim system context for the concept step — only system title,
+        // summary, and creation choices. Omits field ranges, constraints, and
+        // reference data to save tokens. When no profile is available the LLM
+        // can query the manuals via the registered @Tool methods.
+        String slimContext;
         if (profile != null) {
-            systemContext = promptBuilder.buildSystemContext(profile);
+            slimContext = buildSlimSystemContext(profile);
         } else {
-            systemContext = "";
+            slimContext = "";
         }
 
         // Inject reference character context if available
@@ -85,14 +87,13 @@ public class ConceptAgent {
         }
 
         String userPrompt = String.format(
-                "System: %s\nActor Type: %s\n\n%s\n\n%s\n\nUser Request: %s\n\n" +
+                "System: %s\nActor Type: %s\n\n%s\n\nUser Request: %s\n\n" +
                         "Create a character concept. " +
                         "IMPORTANT: Your response MUST be a JSON object with a \"name\" key (the character's name as a string). " +
                         "Do NOT omit the \"name\" key. Example: {\"name\": \"Character Name\", \"concept\": \"...\", ...}",
                 systemId,
                 request.getActorType(),
-                systemContext,
-                referenceContext,
+                slimContext,
                 request.getPrompt()
         );
 
@@ -112,6 +113,28 @@ public class ConceptAgent {
         }
         log.info("Core concept keys: {}, name='{}'", concept.keySet(), extractName(concept));
         return concept;
+    }
+
+    /**
+     * Build a minimal system context for the concept step — only system title, summary,
+     * and creation choices. Omits field ranges, constraints, and reference data
+     * to save tokens (the field filler will get the full context later).
+     */
+    private String buildSlimSystemContext(SystemProfileDto profile) {
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("=== GAME SYSTEM: ").append(profile.getSystemTitle())
+                .append(" (").append(profile.getSystemId()).append(") ===\n");
+        if (profile.getSystemSummary() != null) {
+            ctx.append("Description: ").append(profile.getSystemSummary()).append("\n");
+        }
+        if (profile.getCreationChoices() != null && !profile.getCreationChoices().isEmpty()) {
+            ctx.append("AVAILABLE CHOICES:\n");
+            for (var entry : profile.getCreationChoices().entrySet()) {
+                ctx.append("- ").append(entry.getKey()).append(": ")
+                        .append(String.join(", ", entry.getValue())).append("\n");
+            }
+        }
+        return ctx.toString();
     }
 
     private SystemProfileDto resolveProfile(String systemId) {

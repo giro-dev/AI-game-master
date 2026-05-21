@@ -318,11 +318,12 @@ export class GeneratePanel {
                 if (matchKey === null) continue;
 
                 const aiValue = map[matchKey];
+                const targetPath = this._resolveItemValuePath(item);
                 if (typeof aiValue === 'number') {
-                    updates.push({ _id: item.id, 'system.value': aiValue });
-                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey} = ${aiValue}`);
+                    updates.push({ _id: item.id, [targetPath]: aiValue });
+                    console.log(`[AI-GM]   Match: "${item.name}" → ${path}.${matchKey} = ${aiValue} (via ${targetPath})`);
                 } else if (typeof aiValue === 'object' && aiValue !== null && 'value' in aiValue) {
-                    updates.push({ _id: item.id, 'system.value': aiValue.value });
+                    updates.push({ _id: item.id, [targetPath]: aiValue.value });
                 }
                 break;
             }
@@ -464,15 +465,56 @@ export class GeneratePanel {
         const itemName = norm(item.name || '');
         const itemId = norm(item.system?.identifier || item.flags?.core?.sourceId || '');
 
+        // Pass 1: exact match only
         for (const key of keys) {
             const nk = norm(key);
             if (!nk) continue;
             if (nk === itemName || nk === itemId) return key;
-            if (itemName.includes(nk) || nk.includes(itemName)) return key;
-            if (itemId && (itemId.includes(nk) || nk.includes(itemId))) return key;
+        }
+
+        // Pass 2: substring match with length guards to prevent false positives
+        // (e.g. "Art" matching "martial_arts" or "Con" matching "constitution")
+        for (const key of keys) {
+            const nk = norm(key);
+            if (!nk || nk.length < 4) continue;
+
+            const nameRatio = Math.min(nk.length, itemName.length) / Math.max(nk.length, itemName.length);
+            if (nameRatio >= 0.6 && (itemName.includes(nk) || nk.includes(itemName))) return key;
+
+            if (itemId) {
+                const idRatio = Math.min(nk.length, itemId.length) / Math.max(nk.length, itemId.length);
+                if (idRatio >= 0.6 && (itemId.includes(nk) || nk.includes(itemId))) return key;
+            }
         }
 
         return null;
+    }
+
+    /**
+     * Resolve the correct item field path for skill value syncing.
+     * Different game systems store skill values at different paths.
+     */
+    private _resolveItemValuePath(item: any): string {
+        const sys = item?.system;
+        if (!sys || typeof sys !== 'object') return 'system.value';
+
+        // CoC7: skills use adjustments.experience.value or adjustments.personal.value
+        if (sys.adjustments && typeof sys.adjustments === 'object') {
+            if (sys.adjustments.experience && typeof sys.adjustments.experience === 'object') {
+                return 'system.adjustments.experience.value';
+            }
+            if (sys.adjustments.personal && typeof sys.adjustments.personal === 'object') {
+                return 'system.adjustments.personal.value';
+            }
+        }
+
+        // D&D5e: proficiency is stored in system.proficient
+        if ('proficient' in sys) {
+            return 'system.proficient';
+        }
+
+        // Default: system.value (Hitos, many generic systems)
+        return 'system.value';
     }
 
     private _flattenStructureAware(

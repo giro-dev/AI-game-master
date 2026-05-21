@@ -10,8 +10,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -137,16 +135,7 @@ public class CharacterGenerationService {
                     (step, progress) -> sendProgress(sessionId, step, progress)
             );
             log.info("Filled fields after constraint enforcement: {} entries", systemData.size());
-            // Diagnostic: log habilidades-related keys so we can confirm they were generated
-            List<String> habilidadKeys = systemData.keySet().stream()
-                    .filter(k -> k.toLowerCase().contains("habilidad"))
-                    .collect(Collectors.toList());
-            if (!habilidadKeys.isEmpty()) {
-                log.info("Habilidades keys in systemData: {}", habilidadKeys);
-                habilidadKeys.forEach(k -> log.info("  {} = {}", k, systemData.get(k)));
-            } else {
-                log.warn("No habilidades keys found in systemData. All keys: {}", systemData.keySet());
-            }
+            log.debug("System data keys: {}", systemData.keySet());
 
             // Step 3: Generate items (90% progress) via ItemGenerationAgent
             sendProgress(sessionId, "Generating items...", 90);
@@ -221,7 +210,7 @@ public class CharacterGenerationService {
         
         // Build actor — extract name with fallbacks for localized AI responses
         CreateCharacterResponse.ActorDto actor = new CreateCharacterResponse.ActorDto();
-        String name = extractName(coreConcept);
+        String name = conceptAgent.extractName(coreConcept);
         actor.setName(name);
         actor.setType(actorType);
         actor.setImg("icons/svg/mystery-man.svg");
@@ -230,9 +219,6 @@ public class CharacterGenerationService {
         // Build nested system data structure from flat field paths
         Map<String, Object> nestedSystem = buildNestedStructure(systemData, coreConcept);
         log.info("Nested system top-level keys: {}", nestedSystem.keySet());
-        if (nestedSystem.containsKey("habilidades")) {
-            log.info("Nested habilidades structure: {}", nestedSystem.get("habilidades"));
-        }
         actor.setSystem(nestedSystem);
         
         // Build character data
@@ -254,14 +240,7 @@ public class CharacterGenerationService {
     private Map<String, Object> buildNestedStructure(Map<String, Object> flatData, Map<String, Object> coreConcept) {
         Map<String, Object> nested = new java.util.HashMap<>();
         
-        // Dynamically merge all core concept fields (except 'name' which goes to actor.name)
-        for (Map.Entry<String, Object> conceptEntry : coreConcept.entrySet()) {
-            String key = conceptEntry.getKey();
-            if ("name".equals(key)) continue; // Name is handled at actor level
-            nested.put(key, conceptEntry.getValue());
-        }
-        
-        // Convert flat paths to nested structure
+        // First: convert flat AI field paths to nested structure
         for (Map.Entry<String, Object> entry : flatData.entrySet()) {
             String path = entry.getKey();
             Object value = entry.getValue();
@@ -272,6 +251,15 @@ public class CharacterGenerationService {
             }
             
             setNestedValue(nested, path, value);
+        }
+        
+        // Second: merge concept fields only where they don't collide with system data.
+        // This prevents concept text (biography, description) from overwriting numeric
+        // fields when the AI happens to use the same top-level key.
+        for (Map.Entry<String, Object> conceptEntry : coreConcept.entrySet()) {
+            String key = conceptEntry.getKey();
+            if ("name".equals(key)) continue; // Name is handled at actor level
+            nested.putIfAbsent(key, conceptEntry.getValue());
         }
         
         return nested;
@@ -357,66 +345,6 @@ public class CharacterGenerationService {
     }
 
 
-    /**
-     * Clean JSON response from AI (remove markdown code blocks)
-     */
-    private String cleanJsonResponse(String response) {
-        if (response == null) return "{}";
-
-        // Remove markdown code blocks
-        response = response.trim();
-        if (response.startsWith("```json")) {
-            response = response.substring(7);
-        } else if (response.startsWith("```")) {
-            response = response.substring(3);
-        }
-
-        if (response.endsWith("```")) {
-            response = response.substring(0, response.length() - 3);
-        }
-
-        return response.trim();
-    }
-
-    /**
-     * Extract the character name from the AI's core concept response.
-     * The AI might use localized keys depending on the prompt language,
-     * so we try multiple candidate keys before falling back.
-     */
-    private String extractName(Map<String, Object> coreConcept) {
-        // Try standard keys first
-        List<String> candidateKeys = List.of(
-                "name", "nombre", "nom", "nome", "Name",
-                "character_name", "characterName",
-                "actor_name", "actorName"
-        );
-        for (String key : candidateKeys) {
-            Object val = coreConcept.get(key);
-            if (val instanceof String s && !s.isBlank()) {
-                return s;
-            }
-        }
-
-        // Case-insensitive search
-        for (Map.Entry<String, Object> entry : coreConcept.entrySet()) {
-            if (entry.getKey().toLowerCase().contains("name") || entry.getKey().toLowerCase().contains("nom")) {
-                if (entry.getValue() instanceof String s && !s.isBlank()) {
-                    return s;
-                }
-            }
-        }
-
-        // Last resort: use first non-blank string value
-        for (Object val : coreConcept.values()) {
-            if (val instanceof String s && !s.isBlank() && s.length() < 60) {
-                log.warn("Could not find 'name' key in core concept, using first short string: '{}'", s);
-                return s;
-            }
-        }
-
-        log.warn("No name found in core concept: {}", coreConcept.keySet());
-        return "AI Character";
-    }
 
     /**
      * Validate character data against blueprint constraints.
