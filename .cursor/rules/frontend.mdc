@@ -1,0 +1,35 @@
+---
+description: Rules for TypeScript Foundry VTT module code in master-foundry
+globs: master-foundry/**/*.ts, master-foundry/**/*.hbs, master-foundry/**/*.css
+alwaysApply: false
+---
+
+# Frontend Rules (master-foundry)
+
+## Stack
+- TypeScript strict mode, ES2020 target, ES module syntax
+- Foundry VTT v12 module API
+- Build: tsc (no bundler)
+
+## Patterns
+- Use Foundry VTT API patterns: Hooks, game global, Actor/Item documents
+- Foundry ambient types declared in src/types/foundry-ambient.d.ts
+- WebSocket communication with master-server backend
+- UI templates use Handlebars (.hbs) in templates/
+- Styles in styles/ directory
+
+## Module Structure
+- Entry point: src/main.ts
+- Services: audio capture/playback, character generation
+- Schema: blueprint/schema extraction from Foundry actors
+- Skills: system skill adapters for different RPG systems
+- Utils: field-tree builder, session manager, data sanitizer
+
+## TypeScript Config
+- strict: true, noImplicitAny: true, strictNullChecks: true, noImplicitReturns: true
+- noUnusedLocals: false, noUnusedParameters: false
+- Module resolution: node
+
+## Build
+- npm run build (tsc)
+- npm run watch (tsc --watch)

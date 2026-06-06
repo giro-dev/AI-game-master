@@ -1,0 +1,42 @@
+# AI Game Master - Windsurf Rules
+
+## Project Overview
+AI-driven Game Master orchestration engine for tabletop RPGs. Integrates LLMs, RAG, and multi-modal audio into Foundry VTT.
+
+## Tech Stack
+- Backend: Java 21, Spring Boot 3.5, Spring AI 1.1, Gradle, Lombok, PostgreSQL, OpenSearch
+- Frontend: TypeScript (strict), Foundry VTT v12 module, ES2020
+- Infra: Docker Compose (PostgreSQL, OpenSearch, Whisper STT, Piper TTS)
+
+## Project Structure
+- `master-server/` - Spring Boot backend (services, controllers, config, prompts, DTOs, entities)
+- `master-foundry/` - Foundry VTT TypeScript module (UI, services, schemas, blueprints)
+
+## Conventions
+- Use Lombok annotations (@Data, @Builder, @Getter, @Setter) for Java classes
+- Controllers are @RestController under /api/*
+- Services use Spring AI ChatClient and Advisor APIs for LLM interactions
+- Use record types for immutable DTOs
+- Prompt templates in src/main/resources/prompts/*.txt use {placeholder} syntax
+- TypeScript uses strict mode with noImplicitAny and strictNullChecks
+- Foundry VTT ambient types are in src/types/foundry-ambient.d.ts
+- Default narration language is Catalan; prompts adapt to configured language
+- All structured LLM responses must use JSON format with explicit schemas in prompts
+- Configuration in application.yml under semantic prefixes (game-master.*, whisper.*, piper-tts.*, tts.*)
+- AI model routing: per-operation config with preferred/fallback models, temperature, and latency budgets
+- Never hardcode API keys; use environment variables (OPENAI_API_KEY, GOOGLE_GENAI_API_KEY)
+
+## Key Concepts
+- Blueprint: JSON schema defining system-specific actor/item structures
+- Director Stateful: Main narrative engine managing adventure flow and state
+- Tension Level: Numeric 0-10 tracking narrative pressure
+- Intent Classifier: Determines player goal (action, dialogue, meta)
+- RAG Advisor: Injects game rules from OpenSearch into LLM context
+- Model Routing: Per-operation AI model selection with preferred/fallback
+- Wyoming Protocol: TCP protocol for local TTS/STT services
+
+## Build Commands
+- Backend: cd master-server && ./gradlew bootRun (auto-starts Docker services)
+- Backend test: cd master-server && ./gradlew test
+- Frontend: cd master-foundry && npm run build
+- Frontend watch: cd master-foundry && npm run watch
