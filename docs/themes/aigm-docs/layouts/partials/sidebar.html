@@ -1,0 +1,14 @@
+{{ if .IsHome }}
+<!-- No sidebar on home -->
+{{ else }}
+<aside class="sidebar">
+  <nav>
+    <ul>
+      {{ $current := . }}
+      {{ range .Site.Sections.ByWeight }}
+      {{ partial "sidebar-section.html" (dict "section" . "current" $current) }}
+      {{ end }}
+    </ul>
+  </nav>
+</aside>
+{{ end }}

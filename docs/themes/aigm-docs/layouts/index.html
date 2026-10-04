@@ -1,0 +1,26 @@
+{{ define "main" }}
+<section class="hero">
+  <h1>{{ .Site.Title }}</h1>
+  <p class="hero-lead">{{ .Site.Params.description }}</p>
+  <div class="hero-actions">
+    <a class="button primary" href="{{ (.Site.GetPage "/funcional").RelPermalink }}">Documentació funcional</a>
+    <a class="button" href="{{ .Site.Params.github }}">GitHub</a>
+  </div>
+</section>
+
+<section class="features">
+  {{ range slice (dict "path" "/funcional" "title" "Funcional" "description" "Què pot fer el Game Master i com fer-lo servir a Foundry VTT.") (dict "path" "/tecnica" "title" "Tècnica" "description" "Arquitectura, serveis, dades i comunicació per a desenvolupadors.") (dict "path" "/millores" "title" "Punts de millora" "description" "Auditoria del codi i propostes de treball pendents.") }}
+  {{ with $.Site.GetPage .path }}
+  <a class="feature-card" href="{{ .RelPermalink }}">
+    <h2>{{ .Title }}</h2>
+    <p>{{ .Description | default $.Description }}</p>
+    <span class="card-link">Explora la secció →</span>
+  </a>
+  {{ end }}
+  {{ end }}
+</section>
+
+<section class="home-section home-intro">
+  {{ .Content }}
+</section>
+{{ end }}

@@ -1,0 +1,19 @@
+{{ $section := .section }}
+{{ $current := .current }}
+{{ $active := eq $current $section }}
+{{ $ancestor := and (not $active) ($current.IsDescendant $section) }}
+<li>
+  <a class="section-link{{ if $active }} active{{ else if $ancestor }} ancestor{{ end }}" href="{{ $section.RelPermalink }}">{{ $section.Title }}</a>
+  {{ if or $section.Sections $section.RegularPages }}
+  <ul>
+    {{ range $section.Sections.ByWeight }}
+    {{ partial "sidebar-section.html" (dict "section" . "current" $current) }}
+    {{ end }}
+    {{ range $section.RegularPages.ByWeight }}
+    <li>
+      <a href="{{ .RelPermalink }}" class="{{ if eq $current . }}active{{ end }}">{{ .Title }}</a>
+    </li>
+    {{ end }}
+  </ul>
+  {{ end }}
+</li>

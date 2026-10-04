@@ -1,0 +1,9 @@
+<header class="site-header">
+  <a class="site-title" href="{{ .Site.Home.RelPermalink }}">{{ .Site.Title }}</a>
+  <nav class="site-nav">
+    {{ range .Site.Menus.main }}
+    <a href="{{ .URL | relURL }}">{{ .Name }}</a>
+    {{ end }}
+    <a class="github-link" href="{{ .Site.Params.github }}" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</header>

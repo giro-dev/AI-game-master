@@ -1,0 +1,9 @@
+<footer class="site-footer">
+  <p>{{ .Site.Title }} · Documentació del projecte</p>
+</footer>
+{{ if .Page.Store.Get "hasMermaid" }}
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+{{ end }}
