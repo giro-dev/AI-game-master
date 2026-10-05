@@ -1,0 +1,14 @@
+{{ define "main" }}
+<article class="doc-article">
+  <h1>{{ .Title }}</h1>
+  {{ if .Params.description }}<p class="lead">{{ .Params.description }}</p>{{ end }}
+  {{ if .Params.date }}<p class="meta">Last updated {{ .Date.Format "2006-01-02" }}</p>{{ end }}
+  {{ .Content }}
+  {{ if or .NextInSection .PrevInSection }}
+  <nav class="prev-next">
+    {{ if .NextInSection }}<a class="prev" href="{{ .NextInSection.RelPermalink }}">&larr; {{ .NextInSection.Title }}</a>{{ end }}
+    {{ if .PrevInSection }}<a class="next" href="{{ .PrevInSection.RelPermalink }}">{{ .PrevInSection.Title }} &rarr;</a>{{ end }}
+  </nav>
+  {{ end }}
+</article>
+{{ end }}

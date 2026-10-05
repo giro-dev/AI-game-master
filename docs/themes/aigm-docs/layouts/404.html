@@ -1,0 +1,10 @@
+{{ define "main" }}
+<article class="doc-article">
+  <h1>No s'ha trobat la pàgina</h1>
+  <p class="lead">La pàgina que cerques no existeix.</p>
+  <p>
+    Torna a <a href="{{ .Site.Home.RelPermalink }}">l'inici</a>
+    o consulta la <a href="{{ (.Site.GetPage "/funcional").RelPermalink }}">documentació</a>.
+  </p>
+</article>
+{{ end }}

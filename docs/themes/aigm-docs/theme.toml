@@ -1,0 +1,6 @@
+name = "aigm-docs"
+license = "MIT"
+licenselink = "https://github.com/giro-dev/AI-game-master"
+description = "Documentació per a AI Game Master"
+homepage = "https://github.com/giro-dev/AI-game-master"
+min_version = "0.112.0"

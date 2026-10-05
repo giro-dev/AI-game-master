@@ -1,0 +1,21 @@
+{{ define "main" }}
+<section class="doc-section">
+  <h1>{{ .Title }}</h1>
+  {{ if .Params.description }}<p class="lead">{{ .Params.description }}</p>{{ end }}
+  {{ .Content }}
+  {{ if .Pages }}
+  <ul class="card-list">
+    {{ range .Pages.ByWeight }}
+    <li>
+      <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+      {{ if .Params.description }}
+      <p>{{ .Params.description }}</p>
+      {{ else if .Summary }}
+      <p>{{ .Summary | plainify | truncate 160 }}</p>
+      {{ end }}
+    </li>
+    {{ end }}
+  </ul>
+  {{ end }}
+</section>
+{{ end }}

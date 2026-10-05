@@ -1,0 +1,35 @@
+baseURL = 'https://giro-dev.github.io/AI-game-master/'
+languageCode = 'ca'
+defaultContentLanguage = 'ca'
+title = 'AI Game Master'
+theme = 'aigm-docs'
+
+[params]
+  description = 'Motor d’orquestració d’un director de joc amb IA per a Foundry VTT.'
+  github = 'https://github.com/giro-dev/AI-game-master'
+
+[menu]
+  [[menu.main]]
+    name = 'Inici'
+    url = '/'
+    weight = 10
+  [[menu.main]]
+    name = 'Funcional'
+    url = '/funcional/'
+    weight = 20
+  [[menu.main]]
+    name = 'Tècnica'
+    url = '/tecnica/'
+    weight = 30
+  [[menu.main]]
+    name = 'Millores'
+    url = '/millores/'
+    weight = 40
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+  [markup.highlight]
+    noClasses = true
+    style = 'github'
