@@ -16,4 +16,5 @@ La secció tècnica recorre el backend Spring Boot i el mòdul Foundry TypeScrip
 - [Model de dades](model-dades/) — entitats JPA i relacions.
 - [Àudio](audio/) — STT, TTS i emmagatzematge.
 - [Frontend](frontend/) — estructura i procés d’inicialització.
+- [Generació d’escenes](generacio-escenes/) — Scene Studio, model canònic, agents, validació i importació a Foundry.
 - [Desplegament i desenvolupament](desplegament-desenvolupament/) — serveis, ordres i execució local.
